@@ -1,0 +1,162 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-display: 'Fredoka', system-ui, sans-serif;
+  --font-sans: 'Nunito', system-ui, sans-serif;
+
+  /* Ink — every outline in the app */
+  --color-ink: #16130c;
+  --color-ink-soft: #6b6355;
+
+  /* Yellow: the star */
+  --color-butter-50: #fffdf4;
+  --color-butter-100: #fff8dd;
+  --color-butter-200: #ffefb0;
+  --color-butter-300: #ffe27a;
+  --color-butter-400: #ffd23f;
+  --color-butter-500: #f8bd13;
+  --color-butter-600: #d99a00;
+
+  /* Blue: used sparingly, on purpose */
+  --color-sky-pop: #2f6bff;
+  --color-sky-soft: #dce7ff;
+
+  /* Small supporting cast */
+  --color-mint: #46d18a;
+  --color-coral: #ff6f5e;
+  --color-grape: #b98bff;
+
+  --radius-blob: 1.75rem;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    color: var(--color-ink);
+    background-color: var(--color-butter-100);
+    background-image:
+      radial-gradient(var(--color-butter-300) 1.5px, transparent 1.6px);
+    background-size: 22px 22px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+}
+
+@layer components {
+  /* The one move that makes the whole thing feel like a sticker book:
+     hard black outline + hard offset shadow, no blur anywhere. */
+  .toon {
+    @apply border-[3px] border-ink;
+    box-shadow: 5px 5px 0 var(--color-ink);
+  }
+
+  .toon-sm {
+    @apply border-[3px] border-ink;
+    box-shadow: 3px 3px 0 var(--color-ink);
+  }
+
+  .toon-lift {
+    transition:
+      transform 120ms cubic-bezier(0.34, 1.56, 0.64, 1),
+      box-shadow 120ms ease;
+  }
+
+  .toon-lift:hover {
+    transform: translate(-2px, -2px);
+    box-shadow: 8px 8px 0 var(--color-ink);
+  }
+
+  .toon-lift:active {
+    transform: translate(3px, 3px);
+    box-shadow: 1px 1px 0 var(--color-ink);
+  }
+}
+
+@keyframes bob {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-1deg);
+  }
+  50% {
+    transform: translateY(-7px) rotate(1.5deg);
+  }
+}
+
+@keyframes wiggle {
+  0%,
+  100% {
+    transform: rotate(-3deg);
+  }
+  50% {
+    transform: rotate(3deg);
+  }
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes dash {
+  to {
+    background-position: 40px 0;
+  }
+}
+
+.animate-bob {
+  animation: bob 3.4s ease-in-out infinite;
+}
+.animate-wiggle {
+  animation: wiggle 0.8s ease-in-out infinite;
+}
+.animate-pop-in {
+  animation: pop-in 320ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-bob,
+  .animate-wiggle,
+  .animate-pop-in {
+    animation: none;
+  }
+  .toon-lift:hover,
+  .toon-lift:active {
+    transform: none;
+  }
+}
+
+::selection {
+  background: var(--color-butter-400);
+  color: var(--color-ink);
+}
+
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-butter-100);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-butter-400);
+  border: 2px solid var(--color-ink);
+  border-radius: 99px;
+}
