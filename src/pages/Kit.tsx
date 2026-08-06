@@ -1,3 +1,4 @@
+import { useAuth } from '../auth/context'
 import { Button, Card, Chip, Field, Input, SectionTitle } from '../components/ui'
 
 /**
@@ -35,6 +36,9 @@ const skills = [
 ]
 
 export function Kit() {
+  const { user } = useAuth()
+  const kit = user?.kit ?? {}
+
   return (
     <div className="space-y-7">
       <SectionTitle
@@ -46,10 +50,10 @@ export function Kit() {
 
       <Card className="flex flex-wrap items-center gap-4 bg-butter-300!">
         <div className="toon-sm flex h-16 w-16 items-center justify-center rounded-full bg-white text-3xl">
-          🧑‍🚀
+          {user?.avatar ?? '🧑‍🚀'}
         </div>
         <div className="flex-1">
-          <h3 className="text-2xl">Ayan Mansoori</h3>
+          <h3 className="text-2xl">{user?.name ?? 'Ayan Mansoori'}</h3>
           <p className="text-sm font-semibold text-ink-soft">
             Full-stack Engineer · 4 years · open to remote
           </p>
@@ -66,7 +70,7 @@ export function Kit() {
           <Card className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Full name">
-                <Input defaultValue="Ayan Mansoori" />
+                <Input key={user?.name} defaultValue={user?.name ?? 'Ayan Mansoori'} />
               </Field>
               <Field label="Pronouns" hint="optional, shown on some forms">
                 <Input placeholder="e.g. they/them" />
@@ -74,10 +78,14 @@ export function Kit() {
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Email">
-                <Input type="email" defaultValue="ayanmansoori44@gmail.com" />
+                <Input
+                  key={user?.email}
+                  type="email"
+                  defaultValue={user?.email ?? 'you@example.com'}
+                />
               </Field>
               <Field label="Phone">
-                <Input defaultValue="+91 98765 43210" />
+                <Input key={kit.phone} defaultValue={kit.phone || '+91 98765 43210'} />
               </Field>
             </div>
             <Field label="Address">
@@ -85,7 +93,7 @@ export function Kit() {
             </Field>
             <div className="grid gap-4 sm:grid-cols-3">
               <Field label="City">
-                <Input defaultValue="Pune" />
+                <Input key={kit.city} defaultValue={kit.city || 'Pune'} />
               </Field>
               <Field label="State">
                 <Input defaultValue="Maharashtra" />
@@ -121,7 +129,7 @@ export function Kit() {
             <Card className="space-y-4">
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field label="Notice period">
-                  <Input defaultValue="30 days" />
+                  <Input key={kit.noticePeriod} defaultValue={kit.noticePeriod || '30 days'} />
                 </Field>
                 <Field label="Total experience">
                   <Input defaultValue="4 years" />

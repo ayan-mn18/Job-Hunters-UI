@@ -10,6 +10,7 @@ import {
   SectionTitle,
   Toggle,
 } from '../components/ui'
+import { useAuth } from '../auth/context'
 import { portals as seedPortals } from '../data/mock'
 
 const steps = [
@@ -21,9 +22,17 @@ const steps = [
 ]
 
 export function Hunt() {
+  const { user } = useAuth()
+  const kit = user?.kit ?? {}
+
   const [running, setRunning] = useState(false)
-  const [portals, setPortals] = useState(seedPortals)
-  const [target, setTarget] = useState(100)
+  // Onboarding picks win over the seed data, when they exist.
+  const [portals, setPortals] = useState(() =>
+    kit.portals
+      ? seedPortals.map((p) => ({ ...p, connected: kit.portals!.includes(p.id) }))
+      : seedPortals,
+  )
+  const [target, setTarget] = useState(kit.dailyTarget ?? 100)
 
   const connected = portals.filter((p) => p.connected).length
 
@@ -86,14 +95,25 @@ export function Hunt() {
           <SectionTitle emoji="📝" title="Your spec" sub="what counts as a good job" />
           <Card className="space-y-4">
             <Field label="Roles you want" hint="comma separated, most wanted first">
-              <Input defaultValue="Senior Frontend Engineer, Full-stack Engineer, Product Engineer" />
+              <Input
+                key={kit.roles}
+                defaultValue={
+                  kit.roles || 'Senior Frontend Engineer, Full-stack Engineer, Product Engineer'
+                }
+              />
             </Field>
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Preferred companies">
-                <Input defaultValue="Stripe, Linear, Vercel, Razorpay" />
+                <Input
+                  key={kit.companies}
+                  defaultValue={kit.companies || 'Stripe, Linear, Vercel, Razorpay'}
+                />
               </Field>
               <Field label="Locations">
-                <Input defaultValue="Remote, Bengaluru, Pune" />
+                <Input
+                  key={kit.locations}
+                  defaultValue={kit.locations || 'Remote, Bengaluru, Pune'}
+                />
               </Field>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
@@ -120,7 +140,9 @@ export function Hunt() {
             <SectionTitle emoji="📄" title="Base resume" sub="every variant starts here" />
             <Card className="border-dashed! bg-butter-50! text-center">
               <div className="animate-bob text-4xl">📄</div>
-              <div className="mt-2 font-display font-bold">ayan—resume—2026.pdf</div>
+              <div className="mt-2 font-display font-bold">
+                {kit.resumeName || 'ayan—resume—2026.pdf'}
+              </div>
               <div className="text-xs text-ink-soft">last parsed 2 days ago · 34 skills found</div>
               <div className="mt-3 flex justify-center gap-2">
                 <Button size="sm">Replace</Button>

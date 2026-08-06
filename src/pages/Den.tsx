@@ -1,15 +1,46 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
+import { useAuth } from '../auth/context'
 import { Mascot } from '../components/Mascot'
 import { Button, Card, Chip, Progress, SectionTitle, Stat } from '../components/ui'
 import { activity, applications, HUNTER, portals, referrals } from '../data/mock'
 
+const BANNER_KEY = 'jobhunters.demo.firstRunBannerDismissed'
+
 export function Den() {
+  const { user } = useAuth()
   const pending = referrals.filter((r) => !r.handled).length
   const live = portals.filter((p) => p.connected)
   const scraped = live.reduce((sum, p) => sum + p.jobsFound, 0)
 
+  const firstName = (user?.name ?? HUNTER.name).split(' ')[0]
+  const [showBanner, setShowBanner] = useState(
+    () => localStorage.getItem(BANNER_KEY) !== '1',
+  )
+
+  function dismissBanner() {
+    localStorage.setItem(BANNER_KEY, '1')
+    setShowBanner(false)
+  }
+
   return (
     <div className="space-y-7">
+      {showBanner && (
+        <Card className="animate-pop-in flex flex-wrap items-center gap-4 bg-mint/25!">
+          <span className="text-3xl">🎉</span>
+          <div className="min-w-56 flex-1">
+            <h3 className="text-xl">Your den is ready, {firstName}.</h3>
+            <p className="text-sm font-semibold text-ink-soft">
+              Your first real hunt runs tomorrow at 06:00. Until then, everything below
+              is sample data so you can see what a busy week looks like.
+            </p>
+          </div>
+          <Button size="sm" variant="ghost" onClick={dismissBanner}>
+            Got it
+          </Button>
+        </Card>
+      )}
+
       {/* hero */}
       <Card className="relative overflow-hidden bg-butter-300!">
         <div className="pointer-events-none absolute -top-10 -right-10 h-44 w-44 rounded-full bg-butter-200" />
@@ -18,7 +49,7 @@ export function Den() {
           <div className="min-w-56 flex-1">
             <Chip tone="white">good morning, hunter</Chip>
             <h1 className="mt-2 text-4xl leading-tight">
-              Hey {HUNTER.name} — Hunty bagged{' '}
+              Hey {firstName} — Hunty bagged{' '}
               <span className="underline decoration-sky-pop decoration-[5px] underline-offset-4">
                 {HUNTER.appliedToday} jobs
               </span>{' '}
@@ -34,12 +65,12 @@ export function Den() {
             </div>
 
             <div className="mt-4 flex flex-wrap gap-2.5">
-              <Link to="/hunt">
+              <Link to="/app/hunt">
                 <Button size="lg" icon={<span>🎯</span>}>
                   Send Hunty out
                 </Button>
               </Link>
-              <Link to="/referrals">
+              <Link to="/app/referrals">
                 <Button size="lg" variant="ghost" icon={<span>🤝</span>}>
                   {pending} referrals waiting
                 </Button>
@@ -77,7 +108,7 @@ export function Den() {
             title="Freshly applied"
             sub="Hunty tailored a resume for each one"
             action={
-              <Link to="/jobs">
+              <Link to="/app/jobs">
                 <Button size="sm" variant="ghost">
                   See all
                 </Button>
