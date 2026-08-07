@@ -18,15 +18,21 @@ const statusMeta: Record<ApplicationStatus, { label: string; tone: ChipTone; emo
   viewed: { label: 'Viewed', tone: 'blue', emoji: '👀' },
   interview: { label: 'Interview', tone: 'mint', emoji: '🎤' },
   rejected: { label: 'Rejected', tone: 'coral', emoji: '💔' },
+  needs_review: { label: 'Needs review', tone: 'grape', emoji: '⚠️' },
+  failed: { label: 'Failed', tone: 'coral', emoji: '×' },
+  closed: { label: 'Closed', tone: 'ink', emoji: '−' },
 }
 
 const filters: (ApplicationStatus | 'all')[] = [
   'all',
   'queued',
+  'needs_review',
   'applied',
   'viewed',
   'interview',
   'rejected',
+  'failed',
+  'closed',
 ]
 
 const EMPTY_COUNTS: ApplicationCounts = {
@@ -36,6 +42,9 @@ const EMPTY_COUNTS: ApplicationCounts = {
   viewed: 0,
   interview: 0,
   rejected: 0,
+  needs_review: 0,
+  failed: 0,
+  closed: 0,
 }
 
 export function Applications() {

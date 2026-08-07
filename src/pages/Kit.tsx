@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useAuth } from '../auth/context'
 import { Button, Card, Chip, Empty, Field, Input, SectionTitle } from '../components/ui'
 import { api } from '../lib/api'
@@ -70,6 +70,8 @@ export function Kit() {
   const [autofilling, setAutofilling] = useState(false)
   const [autofillNotice, setAutofillNotice] = useState('')
   const [showAddRole, setShowAddRole] = useState(false)
+  const [photoBusy, setPhotoBusy] = useState(false)
+  const photoInput = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -134,6 +136,34 @@ export function Kit() {
       setError(err instanceof Error ? err.message : 'Could not autofill from your resume.')
     } finally {
       setAutofilling(false)
+    }
+  }
+
+  async function uploadPhoto(file: File) {
+    setPhotoBusy(true)
+    setError('')
+    const body = new FormData()
+    body.append('photo', file)
+    try {
+      const { data } = await api.upload<FullKit>('/me/kit/photo', body)
+      setKit(data)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not upload profile photo.')
+    } finally {
+      setPhotoBusy(false)
+    }
+  }
+
+  async function removePhoto() {
+    setPhotoBusy(true)
+    setError('')
+    try {
+      await api.delete('/me/kit/photo')
+      setKit((current) => current ? { ...current, photoFileName: null, photoUrl: null } : current)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not remove profile photo.')
+    } finally {
+      setPhotoBusy(false)
     }
   }
 
@@ -227,14 +257,39 @@ export function Kit() {
 
 
       <Card className="flex flex-wrap items-center gap-4 bg-butter-300!">
-        <div className="toon-sm flex h-16 w-16 items-center justify-center rounded-full bg-white text-3xl">
-          {user?.avatar ?? '🧑‍🚀'}
+        <div className="toon-sm flex h-20 w-20 items-center justify-center overflow-hidden rounded-full bg-white text-3xl">
+          {kit.photoUrl ? (
+            <img src={kit.photoUrl} alt="Portal profile" className="h-full w-full object-cover" />
+          ) : (
+            user?.avatar ?? '🧑‍🚀'
+          )}
         </div>
         <div className="flex-1">
           <h3 className="text-2xl">{user?.name ?? 'Hunter'}</h3>
           <p className="text-sm font-semibold text-ink-soft">
             {form.headline || 'Add a headline below so portals know who you are'}
           </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <input
+              ref={photoInput}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              className="hidden"
+              onChange={(event) => {
+                const file = event.target.files?.[0]
+                if (file) void uploadPhoto(file)
+                event.target.value = ''
+              }}
+            />
+            <Button size="sm" variant="ghost" disabled={photoBusy} onClick={() => photoInput.current?.click()}>
+              {photoBusy ? 'Saving…' : kit.photoUrl ? 'Replace photo' : 'Upload photo'}
+            </Button>
+            {kit.photoUrl && (
+              <Button size="sm" variant="ghost" disabled={photoBusy} onClick={() => void removePhoto()}>
+                Remove
+              </Button>
+            )}
+          </div>
         </div>
         <div className="flex gap-2">
           {user?.kit.resumeName && <Chip tone="white">📄 {user.kit.resumeName}</Chip>}

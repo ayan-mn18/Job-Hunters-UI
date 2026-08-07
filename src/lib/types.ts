@@ -89,9 +89,68 @@ export type Dashboard = {
   activity: ActivityItem[]
 }
 
+export type ScrapedJobStatus =
+  | 'scraped'
+  | 'eligible'
+  | 'below_threshold'
+  | 'deal_breaker'
+  | 'approved'
+  | 'rejected'
+  | 'queued'
+  | 'tailored'
+  | 'applying'
+  | 'applied'
+  | 'needs_review'
+  | 'failed'
+  | 'closed'
+
+export type ScrapedJobDashboardItem = {
+  id: string
+  jobId: string
+  title: string
+  company: string
+  locations: Array<{ raw?: string; city?: string; country?: string; countryCode?: string; isRemote?: boolean }>
+  remote: string
+  sourcePortal: string
+  status: ScrapedJobStatus
+  candidateStatus: string | null
+  score: number | null
+  reasons: string[]
+  skills: string[]
+  descriptionPreview: string
+  jobUrl: string
+  applyUrl: string | null
+  postedAt: string
+  discoveredAt: string
+}
+
+export type ScrapedJobsDashboard = {
+  run: {
+    id: string
+    status: string
+    jobsScraped: number
+    jobsScored: number
+    applicationsSubmitted: number
+    startedAt: string | null
+    finishedAt: string | null
+  } | null
+  counts: Record<string, number>
+  portals: Record<string, number>
+  items: ScrapedJobDashboardItem[]
+  historical: boolean
+}
+
 /* ----------------------------------------------------------- applications */
 
-export type ApplicationStatus = 'queued' | 'applied' | 'viewed' | 'interview' | 'rejected'
+export type ApplicationStatus =
+  | 'queued'
+  | 'applied'
+  | 'viewed'
+  | 'interview'
+  | 'rejected'
+  | 'needs_review'
+  | 'failed'
+  | 'closed'
 
 export type Application = {
   id: string
@@ -126,6 +185,16 @@ export type Portal = {
   isAvailable: boolean
   connectedAt: string | null
   lastSyncedAt: string | null
+}
+
+export type PortalAccount = {
+  id: string
+  portalId: string
+  email: string
+  status: string
+  actionRequired: string | null
+  lastVerifiedAt: string | null
+  profileSyncedAt: string | null
 }
 
 /* -------------------------------------------------------------- referrals */
@@ -181,33 +250,57 @@ export type HuntSpec = {
   updatedAt: string
 }
 
+export type HuntCandidate = {
+  id: string
+  jobId: string
+  title: string
+  company: string
+  location: string
+  remote: string
+  sourcePortal: string
+  score: number
+  reasons: string[]
+  url: string
+  applyUrl: string | null
+  postedAt: string
+  descriptionPreview: string
+  skills: string[]
+  status: string
+}
+
 export type HuntRun = {
   id: string
   status: string
   running: boolean
+  awaitingApproval: boolean
   targetApplications: number
   jobsScraped: number
   jobsScored: number
+  candidatesApproved: number
   applicationsSubmitted: number
+  applicationsNeedsReview: number
   progress: unknown
   error: string | null
   startedAt: string | null
   finishedAt: string | null
   stopRequestedAt: string | null
+  approvedAt: string | null
   createdAt: string
 }
 
 export type HuntStatus = {
   running: boolean
+  awaitingApproval: boolean
   dailyTarget: number
   currentRun: HuntRun | null
+  candidates: HuntCandidate[]
   queueStubbed: boolean
 }
 
 export type HuntStartResult = HuntRun & {
-  jobId: string
-  queueStubbed: boolean
   warnings: string[]
+  candidates: HuntCandidate[]
+  sources: Array<{ portal: string; seen: number; fresh: number; error: string | null }>
 }
 
 /* ---------------------------------------------------------------- resumes */
@@ -227,6 +320,8 @@ export type Resume = {
   parseError: string | null
   autofillAvailable: boolean
   uploadedAt: string
+  structuredVersion: number
+  structuredConfirmedAt: string | null
 }
 export type ResumeAutofillResult = {
   resume: Resume
@@ -278,6 +373,8 @@ export type FullKit = {
   workAuthorization: string | null
   willingToRelocate: string | null
   skills: string[]
+  photoFileName: string | null
+  photoUrl: string | null
   /** 0–100, drives the "92% complete" chip. */
   completeness: number
   updatedAt: string | null
