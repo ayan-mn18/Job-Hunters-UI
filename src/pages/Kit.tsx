@@ -1,43 +1,194 @@
+import { useEffect, useState, type FormEvent } from 'react'
 import { useAuth } from '../auth/context'
-import { Button, Card, Chip, Field, Input, SectionTitle } from '../components/ui'
+import { Button, Card, Chip, Empty, Field, Input, SectionTitle } from '../components/ui'
+import { api } from '../lib/api'
+import type { Employment, FullKit, Resume, ResumeAutofillResult } from '../lib/types'
 
 /**
  * "My Kit" — the bag of answers Hunty carries to every application form.
  * Anything a job portal ever asks for lives here once.
+ *
+ * The whole form saves in one `PUT /me/kit`; employment rows and skills have
+ * their own endpoints.
  */
 
-const experience = [
-  {
-    emoji: '🌩️',
-    role: 'Software Engineer',
-    company: 'Nimbus Labs',
-    period: 'Jan 2024 — now',
-    blurb: 'React + Node platform work. Owned the billing rewrite.',
-  },
-  {
-    emoji: '🍭',
-    role: 'Junior Developer',
-    company: 'Pastel Pay',
-    period: 'Jun 2022 — Dec 2023',
-    blurb: 'Payments dashboard, internal tooling, on-call rotation.',
-  },
-]
+type KitForm = {
+  fullName: string
+  pronouns: string
+  email: string
+  phone: string
+  addressLine1: string
+  city: string
+  state: string
+  postalCode: string
+  country: string
+  linkedinUrl: string
+  githubUrl: string
+  portfolioUrl: string
+  headline: string
+  noticePeriod: string
+  totalExperience: string
+  currentCtc: string
+  expectedCtc: string
+  workAuthorization: string
+  willingToRelocate: string
+}
 
-const skills = [
-  'React',
-  'TypeScript',
-  'Node.js',
-  'PostgreSQL',
-  'AWS',
-  'Docker',
-  'GraphQL',
-  'Redis',
-  'CI/CD',
-]
+function toForm(kit: FullKit): KitForm {
+  return {
+    fullName: kit.fullName ?? '',
+    pronouns: kit.pronouns ?? '',
+    email: kit.email ?? '',
+    phone: kit.phone ?? '',
+    addressLine1: kit.addressLine1 ?? '',
+    city: kit.city ?? '',
+    state: kit.state ?? '',
+    postalCode: kit.postalCode ?? '',
+    country: kit.country ?? '',
+    linkedinUrl: kit.linkedinUrl ?? '',
+    githubUrl: kit.githubUrl ?? '',
+    portfolioUrl: kit.portfolioUrl ?? '',
+    headline: kit.headline ?? '',
+    noticePeriod: kit.noticePeriod ?? '',
+    totalExperience: kit.totalExperience ?? '',
+    currentCtc: kit.currentCtc ?? '',
+    expectedCtc: kit.expectedCtc ?? '',
+    workAuthorization: kit.workAuthorization ?? '',
+    willingToRelocate: kit.willingToRelocate ?? '',
+  }
+}
 
 export function Kit() {
   const { user } = useAuth()
-  const kit = user?.kit ?? {}
+  const [kit, setKit] = useState<FullKit | null>(null)
+  const [form, setForm] = useState<KitForm | null>(null)
+  const [skills, setSkills] = useState<string[]>([])
+  const [newSkill, setNewSkill] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [error, setError] = useState('')
+  const [autofilling, setAutofilling] = useState(false)
+  const [autofillNotice, setAutofillNotice] = useState('')
+  const [showAddRole, setShowAddRole] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    api
+      .get<FullKit>('/me/kit')
+      .then(({ data }) => {
+        if (cancelled) return
+        setKit(data)
+        setForm(toForm(data))
+        setSkills(data.skills)
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load the kit.')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const set = (key: keyof KitForm) => (e: { target: { value: string } }) =>
+    setForm((f) => (f ? { ...f, [key]: e.target.value } : f))
+
+  async function save() {
+    if (!form) return
+    setSaving(true)
+    setSaved(false)
+    setError('')
+    try {
+      // The API treats "" as "cleared"; absent keys are left alone.
+      const { data } = await api.put<FullKit>('/me/kit', { ...form, skills })
+      setKit(data)
+      setForm(toForm(data))
+      setSkills(data.skills)
+      setSaved(true)
+      setTimeout(() => setSaved(false), 1800)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save the kit.')
+    } finally {
+      setSaving(false)
+    }
+  }
+  async function autofillFromResume() {
+    setAutofilling(true)
+    setError('')
+    setAutofillNotice('')
+    try {
+      const { data: resume } = await api.get<Resume | null>('/resumes/base')
+      if (!resume) throw new Error('Upload a base resume before using autofill.')
+      const { data } = await api.post<ResumeAutofillResult>(
+        `/resumes/${resume.id}/autofill`,
+      )
+      setKit(data.kit)
+      setForm(toForm(data.kit))
+      setSkills(data.kit.skills)
+      const count = data.applied.fields.length + data.applied.skills + data.applied.employments
+      setAutofillNotice(
+        count > 0
+          ? `Filled ${count} blank detail${count === 1 ? '' : 's'} from ${resume.fileName}.`
+          : 'Everything found in your resume is already in your kit.',
+      )
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not autofill from your resume.')
+    } finally {
+      setAutofilling(false)
+    }
+  }
+
+
+  function addSkill() {
+    const skill = newSkill.trim()
+    if (!skill) return
+    setSkills((list) => (list.includes(skill) ? list : [...list, skill]))
+    setNewSkill('')
+  }
+
+  async function addEmployment(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    const fields = new FormData(e.currentTarget)
+    const role = String(fields.get('role') ?? '').trim()
+    const company = String(fields.get('company') ?? '').trim()
+    if (!role || !company) return
+    try {
+      const { data } = await api.post<Employment>('/me/kit/employments', {
+        role,
+        company,
+        emoji: String(fields.get('emoji') ?? '').trim() || '💼',
+        blurb: String(fields.get('blurb') ?? '').trim() || undefined,
+        isCurrent: fields.get('isCurrent') === 'on',
+        sortOrder: kit?.employments.length ?? 0,
+      })
+      setKit((k) => (k ? { ...k, employments: [...k.employments, data] } : k))
+      setShowAddRole(false)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not add that role.')
+    }
+  }
+
+  async function removeEmployment(id: string) {
+    const previous = kit?.employments ?? []
+    setKit((k) => (k ? { ...k, employments: k.employments.filter((e) => e.id !== id) } : k))
+    try {
+      await api.delete(`/me/kit/employments/${id}`)
+    } catch (err) {
+      setKit((k) => (k ? { ...k, employments: previous } : k))
+      setError(err instanceof Error ? err.message : 'Could not remove that role.')
+    }
+  }
+
+  if (!kit || !form) {
+    return (
+      <Card>
+        {error ? (
+          <Empty emoji="😵" title="The kit did not load" sub={error} />
+        ) : (
+          <Empty emoji="🧳" title="Packing your kit…" />
+        )}
+      </Card>
+    )
+  }
 
   return (
     <div className="space-y-7">
@@ -45,22 +196,49 @@ export function Kit() {
         emoji="🧳"
         title="My Kit"
         sub="Fill it once. Hunty answers every form with it."
-        action={<Button size="sm" icon={<span>💾</span>}>Save kit</Button>}
+        action={
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={autofillFromResume}
+              disabled={autofilling}
+              icon={<span>✨</span>}
+            >
+              {autofilling ? 'Reading resume…' : 'Autofill from resume'}
+            </Button>
+            <Button size="sm" onClick={save} disabled={saving} icon={<span>💾</span>}>
+              {saving ? 'Saving…' : saved ? 'Saved ✓' : 'Save kit'}
+            </Button>
+          </div>
+        }
       />
+
+      {error && (
+        <Card className="bg-coral/15!">
+          <p className="text-sm font-semibold">{error}</p>
+        </Card>
+      )}
+      {autofillNotice && (
+        <Card className="bg-mint/20!">
+          <p className="text-sm font-semibold">{autofillNotice}</p>
+        </Card>
+      )}
+
 
       <Card className="flex flex-wrap items-center gap-4 bg-butter-300!">
         <div className="toon-sm flex h-16 w-16 items-center justify-center rounded-full bg-white text-3xl">
           {user?.avatar ?? '🧑‍🚀'}
         </div>
         <div className="flex-1">
-          <h3 className="text-2xl">{user?.name ?? 'Ayan Mansoori'}</h3>
+          <h3 className="text-2xl">{user?.name ?? 'Hunter'}</h3>
           <p className="text-sm font-semibold text-ink-soft">
-            Full-stack Engineer · 4 years · open to remote
+            {form.headline || 'Add a headline below so portals know who you are'}
           </p>
         </div>
         <div className="flex gap-2">
-          <Chip tone="white">📄 resume on file</Chip>
-          <Chip tone="mint">92% complete</Chip>
+          {user?.kit.resumeName && <Chip tone="white">📄 {user.kit.resumeName}</Chip>}
+          <Chip tone="mint">{kit.completeness}% complete</Chip>
         </div>
       </Card>
 
@@ -70,40 +248,43 @@ export function Kit() {
           <Card className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Full name">
-                <Input key={user?.name} defaultValue={user?.name ?? 'Ayan Mansoori'} />
+                <Input value={form.fullName} onChange={set('fullName')} />
               </Field>
               <Field label="Pronouns" hint="optional, shown on some forms">
-                <Input placeholder="e.g. they/them" />
+                <Input value={form.pronouns} onChange={set('pronouns')} placeholder="e.g. they/them" />
               </Field>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Email">
-                <Input
-                  key={user?.email}
-                  type="email"
-                  defaultValue={user?.email ?? 'you@example.com'}
-                />
+                <Input type="email" value={form.email} onChange={set('email')} />
               </Field>
               <Field label="Phone">
-                <Input key={kit.phone} defaultValue={kit.phone || '+91 98765 43210'} />
+                <Input value={form.phone} onChange={set('phone')} placeholder="+91 98765 43210" />
               </Field>
             </div>
+            <Field label="Headline" hint="one line, shown under your name">
+              <Input
+                value={form.headline}
+                onChange={set('headline')}
+                placeholder="Full-stack Engineer · 4 years · open to remote"
+              />
+            </Field>
             <Field label="Address">
-              <Input defaultValue="221B Marigold Lane" />
+              <Input value={form.addressLine1} onChange={set('addressLine1')} placeholder="221B Marigold Lane" />
             </Field>
             <div className="grid gap-4 sm:grid-cols-3">
               <Field label="City">
-                <Input key={kit.city} defaultValue={kit.city || 'Pune'} />
+                <Input value={form.city} onChange={set('city')} placeholder="Pune" />
               </Field>
               <Field label="State">
-                <Input defaultValue="Maharashtra" />
+                <Input value={form.state} onChange={set('state')} placeholder="Maharashtra" />
               </Field>
               <Field label="PIN / ZIP">
-                <Input defaultValue="411001" />
+                <Input value={form.postalCode} onChange={set('postalCode')} placeholder="411001" />
               </Field>
             </div>
             <Field label="Country">
-              <Input defaultValue="India" />
+              <Input value={form.country} onChange={set('country')} placeholder="India" />
             </Field>
           </Card>
         </section>
@@ -113,13 +294,13 @@ export function Kit() {
             <SectionTitle emoji="🔗" title="Links" />
             <Card className="space-y-4">
               <Field label="LinkedIn">
-                <Input defaultValue="linkedin.com/in/ayan-mn18" />
+                <Input value={form.linkedinUrl} onChange={set('linkedinUrl')} placeholder="linkedin.com/in/you" />
               </Field>
               <Field label="GitHub">
-                <Input defaultValue="github.com/ayan-mn18" />
+                <Input value={form.githubUrl} onChange={set('githubUrl')} placeholder="github.com/you" />
               </Field>
               <Field label="Portfolio">
-                <Input placeholder="yoursite.com" />
+                <Input value={form.portfolioUrl} onChange={set('portfolioUrl')} placeholder="yoursite.com" />
               </Field>
             </Card>
           </div>
@@ -129,26 +310,34 @@ export function Kit() {
             <Card className="space-y-4">
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field label="Notice period">
-                  <Input key={kit.noticePeriod} defaultValue={kit.noticePeriod || '30 days'} />
+                  <Input value={form.noticePeriod} onChange={set('noticePeriod')} placeholder="30 days" />
                 </Field>
                 <Field label="Total experience">
-                  <Input defaultValue="4 years" />
+                  <Input value={form.totalExperience} onChange={set('totalExperience')} placeholder="4 years" />
                 </Field>
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field label="Current CTC">
-                  <Input defaultValue="₹24,00,000" />
+                  <Input value={form.currentCtc} onChange={set('currentCtc')} placeholder="₹24,00,000" />
                 </Field>
                 <Field label="Expected CTC">
-                  <Input defaultValue="₹36,00,000" />
+                  <Input value={form.expectedCtc} onChange={set('expectedCtc')} placeholder="₹36,00,000" />
                 </Field>
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field label="Work authorization">
-                  <Input defaultValue="Indian citizen — no sponsorship needed" />
+                  <Input
+                    value={form.workAuthorization}
+                    onChange={set('workAuthorization')}
+                    placeholder="Indian citizen — no sponsorship needed"
+                  />
                 </Field>
                 <Field label="Willing to relocate">
-                  <Input defaultValue="Yes, for the right team" />
+                  <Input
+                    value={form.willingToRelocate}
+                    onChange={set('willingToRelocate')}
+                    placeholder="Yes, for the right team"
+                  />
                 </Field>
               </div>
             </Card>
@@ -161,40 +350,95 @@ export function Kit() {
           emoji="💼"
           title="Employment history"
           action={
-            <Button size="sm" variant="ghost">
-              + Add role
+            <Button size="sm" variant="ghost" onClick={() => setShowAddRole((s) => !s)}>
+              {showAddRole ? '✕ Cancel' : '+ Add role'}
             </Button>
           }
         />
-        <div className="grid gap-3 sm:grid-cols-2">
-          {experience.map((e, i) => (
-            <Card key={e.company} className="p-4" tilt={i % 2 ? 0.8 : -0.8}>
-              <div className="flex items-start gap-3">
-                <div className="toon-sm flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-butter-200 text-xl">
-                  {e.emoji}
-                </div>
-                <div className="min-w-0">
-                  <div className="font-display font-bold">{e.role}</div>
-                  <div className="text-sm text-ink-soft">
-                    {e.company} · {e.period}
-                  </div>
-                  <p className="mt-1.5 text-sm">{e.blurb}</p>
-                </div>
+        {showAddRole && (
+          <Card className="mb-3 animate-pop-in">
+            <form onSubmit={addEmployment} className="grid gap-3 sm:grid-cols-2">
+              <Field label="Role">
+                <Input name="role" placeholder="Software Engineer" required />
+              </Field>
+              <Field label="Company">
+                <Input name="company" placeholder="Nimbus Labs" required />
+              </Field>
+              <Field label="Emoji" hint="any one will do">
+                <Input name="emoji" placeholder="🌩️" maxLength={4} />
+              </Field>
+              <Field label="What you did">
+                <Input name="blurb" placeholder="Owned the billing rewrite." />
+              </Field>
+              <label className="flex items-center gap-2 text-sm font-semibold">
+                <input type="checkbox" name="isCurrent" defaultChecked /> I work here now
+              </label>
+              <div className="flex items-end justify-end">
+                <Button type="submit" size="sm" variant="blue" icon={<span>➕</span>}>
+                  Add to history
+                </Button>
               </div>
-            </Card>
-          ))}
-        </div>
+            </form>
+          </Card>
+        )}
+        {kit.employments.length === 0 ? (
+          <Card>
+            <Empty emoji="🍼" title="No roles yet" sub="Add your first job so portals stop asking." />
+          </Card>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {kit.employments.map((e, i) => (
+              <Card key={e.id} className="p-4" tilt={i % 2 ? 0.8 : -0.8}>
+                <div className="flex items-start gap-3">
+                  <div className="toon-sm flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-butter-200 text-xl">
+                    {e.emoji}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="font-display font-bold">{e.role}</div>
+                    <div className="text-sm text-ink-soft">
+                      {e.company} · {e.period}
+                    </div>
+                    {e.blurb && <p className="mt-1.5 text-sm">{e.blurb}</p>}
+                  </div>
+                  <button
+                    onClick={() => removeEmployment(e.id)}
+                    aria-label={`Remove ${e.role} at ${e.company}`}
+                    className="text-xs font-semibold text-ink-soft hover:text-coral"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </Card>
+            ))}
+          </div>
+        )}
       </section>
 
       <section>
         <SectionTitle emoji="🛠️" title="Skills" sub="pulled from your resume, edit freely" />
-        <Card className="flex flex-wrap gap-2">
+        <Card className="flex flex-wrap items-center gap-2">
           {skills.map((s) => (
-            <Chip key={s} tone="yellow">
-              {s} ✕
-            </Chip>
+            <button key={s} onClick={() => setSkills((list) => list.filter((x) => x !== s))}>
+              <Chip tone="yellow">{s} ✕</Chip>
+            </button>
           ))}
-          <Chip tone="white">+ add skill</Chip>
+          <span className="flex items-center gap-1.5">
+            <Input
+              value={newSkill}
+              onChange={(e) => setNewSkill(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  addSkill()
+                }
+              }}
+              placeholder="add a skill"
+              className="w-36 py-1.5 text-sm"
+            />
+            <Button size="sm" variant="ghost" onClick={addSkill}>
+              + add
+            </Button>
+          </span>
         </Card>
       </section>
     </div>

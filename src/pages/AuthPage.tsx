@@ -25,19 +25,25 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
     if (!email.trim() || !password.trim()) {
-      setError('Email and password, please. Any of them will do.')
+      setError('Email and password, please.')
+      return
+    }
+    if (isSignup && !name.trim()) {
+      setError('Tell Hunty your name first.')
       return
     }
     setError('')
     setBusy(true)
     try {
       if (isSignup) {
-        await signUp(name, email.trim(), password)
+        await signUp(name.trim(), email.trim(), password)
         navigate('/welcome', { replace: true })
       } else {
         const user = await signIn(email.trim(), password)
         navigate(user.onboarded ? '/app' : '/welcome', { replace: true })
       }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong. Try again.')
     } finally {
       setBusy(false)
     }
@@ -84,12 +90,12 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
         {/* form side */}
         <div className="order-1 lg:order-2">
           <Card className="animate-pop-in">
-            <Chip tone="blue">demo mode</Chip>
+            <Chip tone="mint">live backend</Chip>
             <h1 className="mt-3 text-4xl leading-tight">
               {isSignup ? 'Make an account' : 'Welcome back'}
             </h1>
             <p className="mt-1.5 text-sm font-semibold text-ink-soft">
-              No backend yet — type anything you like and you are in.
+              Real accounts now — everything you do is saved to the database.
             </p>
 
             <form onSubmit={onSubmit} className="mt-5 space-y-4">
@@ -114,7 +120,7 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
                 />
               </Field>
 
-              <Field label="Password" hint="literally anything">
+              <Field label="Password" hint="at least 8 characters">
                 <Input
                   type="password"
                   value={password}
@@ -151,8 +157,8 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
               <Button
                 variant="ghost"
                 onClick={() => {
-                  setEmail('demo@jobhunters.app')
-                  setPassword('demo1234')
+                  setEmail('demo@jobhunters.test')
+                  setPassword('hunty-demo-2026')
                   if (isSignup) setName('Ayan Mansoori')
                 }}
                 icon={<span>✨</span>}

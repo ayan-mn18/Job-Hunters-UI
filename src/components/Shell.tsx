@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, NavLink, Outlet } from 'react-router-dom'
 import { useAuth } from '../auth/context'
-import { HUNTER } from '../data/mock'
+import { api } from '../lib/api'
+import type { DashboardHunter } from '../lib/types'
 import { Button, Chip } from './ui'
 
 const nav = [
@@ -32,7 +33,7 @@ function NavItem({ to, emoji, label, end }: (typeof nav)[number]) {
 }
 
 function UserMenu() {
-  const { user, signOut, resetDemo } = useAuth()
+  const { user, signOut } = useAuth()
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
@@ -73,14 +74,6 @@ function UserMenu() {
               </Button>
             </Link>
             <Button
-              variant="ghost"
-              size="sm"
-              className="w-full justify-start"
-              onClick={resetDemo}
-            >
-              🔄 Reset demo data
-            </Button>
-            <Button
               variant="danger"
               size="sm"
               className="w-full justify-start"
@@ -96,6 +89,15 @@ function UserMenu() {
 }
 
 export function Shell() {
+  const [hunter, setHunter] = useState<DashboardHunter | null>(null)
+
+  useEffect(() => {
+    api
+      .get<{ hunter: DashboardHunter }>('/dashboard')
+      .then(({ data }) => setHunter(data.hunter))
+      .catch(() => setHunter(null))
+  }, [])
+
   return (
     <div className="min-h-screen">
       {/* top bar */}
@@ -112,12 +114,16 @@ export function Shell() {
           </Link>
 
           <div className="ml-auto flex items-center gap-3">
-            <Chip tone="white" className="hidden sm:inline-flex">
-              🔥 {HUNTER.streakDays} day streak
-            </Chip>
-            <Chip tone="ink">
-              {HUNTER.appliedToday}/{HUNTER.dailyTarget} today
-            </Chip>
+            {hunter && (
+              <>
+                <Chip tone="white" className="hidden sm:inline-flex">
+                  🔥 {hunter.streakDays} day streak
+                </Chip>
+                <Chip tone="ink">
+                  {hunter.appliedToday}/{hunter.dailyTarget} today
+                </Chip>
+              </>
+            )}
             <UserMenu />
           </div>
         </div>

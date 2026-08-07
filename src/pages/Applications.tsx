@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Button,
   Card,
@@ -9,7 +9,8 @@ import {
   Stat,
   type ChipTone,
 } from '../components/ui'
-import { applications, type ApplicationStatus } from '../data/mock'
+import { api, downloadFile } from '../lib/api'
+import type { Application, ApplicationCounts, ApplicationStatus } from '../lib/types'
 
 const statusMeta: Record<ApplicationStatus, { label: string; tone: ChipTone; emoji: string }> = {
   queued: { label: 'Queued', tone: 'white', emoji: '⏳' },
@@ -28,21 +29,66 @@ const filters: (ApplicationStatus | 'all')[] = [
   'rejected',
 ]
 
+const EMPTY_COUNTS: ApplicationCounts = {
+  all: 0,
+  queued: 0,
+  applied: 0,
+  viewed: 0,
+  interview: 0,
+  rejected: 0,
+}
+
 export function Applications() {
   const [filter, setFilter] = useState<ApplicationStatus | 'all'>('all')
   const [q, setQ] = useState('')
+  const [rows, setRows] = useState<Application[]>([])
+  const [counts, setCounts] = useState<ApplicationCounts>(EMPTY_COUNTS)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [exporting, setExporting] = useState(false)
 
-  const rows = applications.filter((a) => {
-    const okStatus = filter === 'all' || a.status === filter
-    const needle = q.trim().toLowerCase()
-    const okSearch =
-      !needle ||
-      a.role.toLowerCase().includes(needle) ||
-      a.company.toLowerCase().includes(needle)
-    return okStatus && okSearch
-  })
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    // The search box hits the server; give the user a beat to finish typing.
+    const timer = setTimeout(
+      () => {
+        const params = new URLSearchParams({ status: filter, limit: '100' })
+        if (q.trim()) params.set('q', q.trim())
+        api
+          .get<Application[]>(`/applications?${params}`)
+          .then(({ data, meta }) => {
+            if (cancelled) return
+            setRows(data)
+            setCounts((meta?.counts as ApplicationCounts | undefined) ?? EMPTY_COUNTS)
+            setError('')
+          })
+          .catch((err) => {
+            if (!cancelled)
+              setError(err instanceof Error ? err.message : 'Could not load applications.')
+          })
+          .finally(() => {
+            if (!cancelled) setLoading(false)
+          })
+      },
+      q ? 250 : 0,
+    )
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [filter, q])
 
-  const count = (s: ApplicationStatus) => applications.filter((a) => a.status === s).length
+  async function exportCsv() {
+    setExporting(true)
+    try {
+      await downloadFile('/applications/export/csv', 'job-hunters-applications.csv')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'The export failed.')
+    } finally {
+      setExporting(false)
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -51,23 +97,29 @@ export function Applications() {
         title="Applications"
         sub="Everything Hunty sent out, and what came back"
         action={
-          <Button size="sm" variant="ghost" icon={<span>⬇️</span>}>
-            Export CSV
+          <Button size="sm" variant="ghost" onClick={exportCsv} disabled={exporting} icon={<span>⬇️</span>}>
+            {exporting ? 'Exporting…' : 'Export CSV'}
           </Button>
         }
       />
 
+      {error && (
+        <Card className="bg-coral/15!">
+          <p className="text-sm font-semibold">{error}</p>
+        </Card>
+      )}
+
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <Stat label="Total sent" value={applications.length} emoji="📤" tone="bg-butter-300" />
-        <Stat label="Viewed" value={count('viewed')} hint="recruiter opened it" emoji="👀" />
+        <Stat label="Total sent" value={counts.all} emoji="📤" tone="bg-butter-300" />
+        <Stat label="Viewed" value={counts.viewed} hint="recruiter opened it" emoji="👀" />
         <Stat
           label="Interviews"
-          value={count('interview')}
+          value={counts.interview}
           hint="the ones that matter"
           emoji="🎤"
           tone="bg-sky-soft"
         />
-        <Stat label="In queue" value={count('queued')} hint="goes out at 06:00" emoji="⏳" />
+        <Stat label="In queue" value={counts.queued} hint="goes out at 06:00" emoji="⏳" />
       </div>
 
       {/* filter bar */}
@@ -90,7 +142,11 @@ export function Applications() {
         </div>
       </Card>
 
-      {rows.length === 0 ? (
+      {loading ? (
+        <Card>
+          <Empty emoji="📡" title="Asking the API…" />
+        </Card>
+      ) : rows.length === 0 ? (
         <Card>
           <Empty
             emoji="🫙"
@@ -120,9 +176,9 @@ export function Applications() {
                       {a.company} · {a.location}
                     </div>
                     <div className="mt-2 flex flex-wrap gap-1.5">
-                      <Chip tone="white">🌐 {a.portal}</Chip>
-                      <Chip tone="white">💰 {a.salary}</Chip>
-                      <Chip tone="white">✂️ {a.resumeVariant}</Chip>
+                      {a.portal && <Chip tone="white">🌐 {a.portal}</Chip>}
+                      {a.salary && <Chip tone="white">💰 {a.salary}</Chip>}
+                      {a.resumeVariant && <Chip tone="white">✂️ {a.resumeVariant}</Chip>}
                     </div>
                   </div>
 
@@ -136,9 +192,13 @@ export function Applications() {
                     </div>
                     <div className="text-right">
                       <div className="text-xs font-semibold text-ink-soft">{a.appliedAt}</div>
-                      <Button size="sm" variant="ghost" className="mt-1.5">
-                        Open JD
-                      </Button>
+                      {a.jobUrl && (
+                        <a href={a.jobUrl} target="_blank" rel="noreferrer">
+                          <Button size="sm" variant="ghost" className="mt-1.5">
+                            Open JD
+                          </Button>
+                        </a>
+                      )}
                     </div>
                   </div>
                 </div>

@@ -1,34 +1,15 @@
 import { createContext, useContext } from 'react'
+import type { KitDraft, User } from '../lib/types'
 
-export type KitDraft = {
-  roles: string
-  locations: string
-  companies: string
-  dailyTarget: number
-  portals: string[]
-  phone: string
-  city: string
-  noticePeriod: string
-  resumeName: string
-}
-
-export type User = {
-  name: string
-  email: string
-  avatar: string
-  onboarded: boolean
-  kit: Partial<KitDraft>
-  joinedAt: string
-}
+export type { KitDraft, User }
 
 export type AuthValue = {
   user: User | null
   ready: boolean
   signIn: (email: string, password: string) => Promise<User>
   signUp: (name: string, email: string, password: string) => Promise<User>
-  completeOnboarding: (kit: Partial<KitDraft>) => void
+  completeOnboarding: (kit: Partial<KitDraft>) => Promise<void>
   signOut: () => void
-  resetDemo: () => void
 }
 
 export const AuthContext = createContext<AuthValue | null>(null)

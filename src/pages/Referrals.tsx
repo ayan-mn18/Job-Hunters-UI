@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Button, Card, Chip, Empty, SectionTitle, Stat } from '../components/ui'
-import { referralDays, referrals as seed, type Referral } from '../data/mock'
+import { api } from '../lib/api'
+import type { Referral, ReferralDay } from '../lib/types'
 
 function SourceChip({ source }: { source: Referral['source'] }) {
   return source === 'linkedin' ? (
@@ -11,23 +12,121 @@ function SourceChip({ source }: { source: Referral['source'] }) {
 }
 
 export function Referrals() {
-  const [dayIndex, setDayIndex] = useState(0)
-  const [list, setList] = useState(seed)
-  const [openId, setOpenId] = useState<string | null>(seed[0]?.id ?? null)
+  const [days, setDays] = useState<ReferralDay[]>([])
+  const [selectedDate, setSelectedDate] = useState<string | null>(null)
+  const [list, setList] = useState<Referral[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [openId, setOpenId] = useState<string | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [rewritingId, setRewritingId] = useState<string | null>(null)
+  const [sendingAll, setSendingAll] = useState(false)
 
-  const day = referralDays[dayIndex]
+  const loadDays = useCallback(async () => {
+    const { data } = await api.get<ReferralDay[]>('/referrals/days?limit=14')
+    setDays(data)
+    return data
+  }, [])
+
+  const loadList = useCallback(async (date: string | null) => {
+    setLoading(true)
+    try {
+      const params = new URLSearchParams({ limit: '100' })
+      if (date) params.set('date', date)
+      const { data } = await api.get<Referral[]>(`/referrals?${params}`)
+      setList(data)
+      setError('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load referrals.')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    loadDays()
+      .then((data) => {
+        if (cancelled) return
+        const first = data[0]?.date ?? null
+        setSelectedDate(first)
+        return loadList(first)
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'Could not load referrals.')
+          setLoading(false)
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [loadDays, loadList])
+
+  function pickDay(date: string) {
+    setSelectedDate(date)
+    setOpenId(null)
+    void loadList(date)
+  }
+
+  const day = days.find((d) => d.date === selectedDate) ?? null
   const pending = list.filter((r) => !r.handled)
   const done = list.filter((r) => r.handled)
 
-  function toggleHandled(id: string) {
-    setList((rs) => rs.map((r) => (r.id === id ? { ...r, handled: !r.handled } : r)))
+  function patchIn(updated: Referral) {
+    setList((rs) => rs.map((r) => (r.id === updated.id ? updated : r)))
+  }
+
+  async function toggleHandled(r: Referral) {
+    try {
+      const { data } = await api.patch<Referral>(`/referrals/${r.id}`, { handled: !r.handled })
+      patchIn(data)
+      void loadDays()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not update that referral.')
+    }
   }
 
   async function copyDraft(r: Referral) {
     await navigator.clipboard.writeText(r.draft)
     setCopiedId(r.id)
     setTimeout(() => setCopiedId((c) => (c === r.id ? null : c)), 1600)
+  }
+
+  async function rewrite(r: Referral) {
+    setRewritingId(r.id)
+    try {
+      const { data } = await api.post<Referral>(`/referrals/${r.id}/draft`, {})
+      patchIn(data)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'The rewrite failed.')
+    } finally {
+      setRewritingId(null)
+    }
+  }
+
+  async function downloadResume(r: Referral) {
+    try {
+      const { data } = await api.get<{ url: string }>(`/referrals/${r.id}/resume`)
+      window.open(data.url, '_blank', 'noopener')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No resume to open.')
+    }
+  }
+
+  async function sendAll() {
+    setSendingAll(true)
+    try {
+      await Promise.all(
+        pending.map((r) => api.patch<Referral>(`/referrals/${r.id}`, { handled: true })),
+      )
+      await loadList(selectedDate)
+      await loadDays()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not send every draft.')
+    } finally {
+      setSendingAll(false)
+    }
   }
 
   return (
@@ -38,42 +137,53 @@ export function Referrals() {
         sub="Every DM and email asking for a referral, gathered in one pile"
       />
 
+      {error && (
+        <Card className="bg-coral/15!">
+          <p className="text-sm font-semibold">{error}</p>
+        </Card>
+      )}
+
       {/* day picker */}
       <Card className="p-3.5">
-        <div className="flex gap-2.5 overflow-x-auto pb-1">
-          {referralDays.map((d, i) => {
-            const total = d.linkedin + d.email
-            const active = i === dayIndex
-            return (
-              <button
-                key={d.date}
-                onClick={() => setDayIndex(i)}
-                className={[
-                  'toon-sm toon-lift min-w-28 shrink-0 rounded-2xl px-3.5 py-2.5 text-left',
-                  active ? 'bg-butter-400' : 'bg-white',
-                ].join(' ')}
-              >
-                <div className="font-display text-sm font-bold">{d.label}</div>
-                <div className="font-display text-2xl leading-none font-bold">{total}</div>
-                <div className="text-[11px] font-semibold text-ink-soft">
-                  {d.linkedin} DM · {d.email} mail
-                </div>
-              </button>
-            )
-          })}
-        </div>
+        {days.length === 0 ? (
+          <p className="p-2 text-sm font-semibold text-ink-soft">
+            No referral requests yet — when they land, they pile up here by day.
+          </p>
+        ) : (
+          <div className="flex gap-2.5 overflow-x-auto pb-1">
+            {days.map((d) => {
+              const active = d.date === selectedDate
+              return (
+                <button
+                  key={d.date}
+                  onClick={() => pickDay(d.date)}
+                  className={[
+                    'toon-sm toon-lift min-w-28 shrink-0 rounded-2xl px-3.5 py-2.5 text-left',
+                    active ? 'bg-butter-400' : 'bg-white',
+                  ].join(' ')}
+                >
+                  <div className="font-display text-sm font-bold">{d.label}</div>
+                  <div className="font-display text-2xl leading-none font-bold">{d.total}</div>
+                  <div className="text-[11px] font-semibold text-ink-soft">
+                    {d.linkedin} DM · {d.email} mail
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        )}
       </Card>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <Stat
-          label="Asked today"
-          value={day.linkedin + day.email}
-          hint={day.label.toLowerCase()}
+          label="Asked"
+          value={day ? day.total : list.length}
+          hint={day ? day.label.toLowerCase() : 'this page'}
           emoji="📥"
           tone="bg-butter-300"
         />
-        <Stat label="LinkedIn DMs" value={day.linkedin} emoji="💼" tone="bg-sky-soft" />
-        <Stat label="Emails" value={day.email} emoji="✉️" />
+        <Stat label="LinkedIn DMs" value={day?.linkedin ?? 0} emoji="💼" tone="bg-sky-soft" />
+        <Stat label="Emails" value={day?.email ?? 0} emoji="✉️" />
         <Stat label="Still waiting" value={pending.length} hint="drafts ready" emoji="⏰" />
       </div>
 
@@ -84,13 +194,19 @@ export function Referrals() {
           title="Waiting on you"
           sub="Hunty already wrote the recommendation. Read, then send."
           action={
-            <Button size="sm" variant="blue" icon={<span>⚡</span>}>
-              Send all drafts
-            </Button>
+            pending.length > 0 ? (
+              <Button size="sm" variant="blue" onClick={sendAll} disabled={sendingAll} icon={<span>⚡</span>}>
+                {sendingAll ? 'Sending…' : 'Send all drafts'}
+              </Button>
+            ) : undefined
           }
         />
 
-        {pending.length === 0 ? (
+        {loading ? (
+          <Card>
+            <Empty emoji="📡" title="Asking the API…" />
+          </Card>
+        ) : pending.length === 0 ? (
           <Card>
             <Empty emoji="🎉" title="Pile is empty" sub="Everyone got their referral today." />
           </Card>
@@ -117,9 +233,9 @@ export function Referrals() {
                       </div>
                       <div className="mt-0.5 text-sm text-ink-soft">{r.headline}</div>
                       <div className="mt-2 flex flex-wrap gap-1.5">
-                        <Chip tone="white">🎯 {r.targetRole}</Chip>
-                        <Chip tone="white">🆔 {r.jobId}</Chip>
-                        <Chip tone="white">📄 {r.resumeName}</Chip>
+                        {r.targetRole && <Chip tone="white">🎯 {r.targetRole}</Chip>}
+                        {r.jobId && <Chip tone="white">🆔 {r.jobId}</Chip>}
+                        {r.resumeName && <Chip tone="white">📄 {r.resumeName}</Chip>}
                       </div>
                     </div>
                     <div className="text-center">
@@ -133,9 +249,11 @@ export function Referrals() {
 
                   {open && (
                     <div className="animate-pop-in border-t-[3px] border-dashed border-butter-300 p-4">
-                      <div className="mb-3 rounded-2xl bg-butter-50 p-3 text-sm italic">
-                        “{r.note}”
-                      </div>
+                      {r.note && (
+                        <div className="mb-3 rounded-2xl bg-butter-50 p-3 text-sm italic">
+                          “{r.note}”
+                        </div>
+                      )}
 
                       <div className="mb-1.5 flex items-center gap-2">
                         <Chip tone="grape">✨ auto-written</Chip>
@@ -144,24 +262,26 @@ export function Referrals() {
                         </span>
                       </div>
                       <div className="toon-sm rounded-2xl bg-white p-3.5 text-sm leading-relaxed">
-                        {r.draft}
+                        {r.draft || 'No draft yet — hit Rewrite and Hunty will write one.'}
                       </div>
 
                       <div className="mt-3 flex flex-wrap gap-2">
                         <Button size="sm" variant="blue" onClick={() => copyDraft(r)}>
                           {copiedId === r.id ? '✅ Copied' : '📋 Copy message'}
                         </Button>
-                        <Button size="sm" icon={<span>📄</span>}>
-                          Download resume
-                        </Button>
-                        <Button size="sm" variant="ghost">
-                          ✏️ Rewrite
+                        {(r.hasResumeFile || r.resumeName) && (
+                          <Button size="sm" icon={<span>📄</span>} onClick={() => downloadResume(r)}>
+                            Download resume
+                          </Button>
+                        )}
+                        <Button size="sm" variant="ghost" onClick={() => rewrite(r)} disabled={rewritingId === r.id}>
+                          {rewritingId === r.id ? '✏️ Writing…' : '✏️ Rewrite'}
                         </Button>
                         <Button
                           size="sm"
                           variant="ghost"
                           className="ml-auto"
-                          onClick={() => toggleHandled(r.id)}
+                          onClick={() => toggleHandled(r)}
                         >
                           ✅ Mark referred
                         </Button>
@@ -189,7 +309,7 @@ export function Referrals() {
                   size="sm"
                   variant="ghost"
                   className="ml-auto"
-                  onClick={() => toggleHandled(r.id)}
+                  onClick={() => toggleHandled(r)}
                 >
                   Undo
                 </Button>

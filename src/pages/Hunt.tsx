@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Mascot } from '../components/Mascot'
 import {
   Button,
@@ -10,8 +10,8 @@ import {
   SectionTitle,
   Toggle,
 } from '../components/ui'
-import { useAuth } from '../auth/context'
-import { portals as seedPortals } from '../data/mock'
+import { api, BASE_URL } from '../lib/api'
+import type { HuntSpec, HuntStartResult, HuntStatus, Portal, Resume } from '../lib/types'
 
 const steps = [
   { n: 1, emoji: '📄', title: 'Read resume', note: 'pull skills, years, titles' },
@@ -21,20 +21,164 @@ const steps = [
   { n: 5, emoji: '📮', title: 'Apply', note: 'forms filled from My Kit' },
 ]
 
+type SpecForm = {
+  roles: string
+  dreamCompanies: string
+  locations: string
+  dealBreakers: string
+  minMatchScore: number
+  dailyTarget: number
+}
+
+function toForm(spec: HuntSpec): SpecForm {
+  return {
+    roles: spec.rolesText,
+    dreamCompanies: spec.dreamCompaniesText,
+    locations: spec.locationsText,
+    dealBreakers: spec.dealBreakersText,
+    minMatchScore: spec.minMatchScore,
+    dailyTarget: spec.dailyTarget,
+  }
+}
+
 export function Hunt() {
-  const { user } = useAuth()
-  const kit = user?.kit ?? {}
+  const [form, setForm] = useState<SpecForm | null>(null)
+  const [status, setStatus] = useState<HuntStatus | null>(null)
+  const [portals, setPortals] = useState<Portal[]>([])
+  const [baseResume, setBaseResume] = useState<Resume | null>(null)
+  const [warnings, setWarnings] = useState<string[]>([])
+  const [busy, setBusy] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [error, setError] = useState('')
+  const fileInput = useRef<HTMLInputElement>(null)
 
-  const [running, setRunning] = useState(false)
-  // Onboarding picks win over the seed data, when they exist.
-  const [portals, setPortals] = useState(() =>
-    kit.portals
-      ? seedPortals.map((p) => ({ ...p, connected: kit.portals!.includes(p.id) }))
-      : seedPortals,
-  )
-  const [target, setTarget] = useState(kit.dailyTarget ?? 100)
+  useEffect(() => {
+    let cancelled = false
+    Promise.all([
+      api.get<HuntSpec>('/hunt/spec'),
+      api.get<HuntStatus>('/hunt/status'),
+      api.get<Portal[]>('/portals'),
+      api.get<Resume | null>('/resumes/base'),
+    ])
+      .then(([specRes, statusRes, portalsRes, resumeRes]) => {
+        if (cancelled) return
+        setForm(toForm(specRes.data))
+        setStatus(statusRes.data)
+        setPortals(portalsRes.data)
+        setBaseResume(resumeRes.data)
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load the hunt.')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
+  const running = status?.running ?? false
   const connected = portals.filter((p) => p.connected).length
+  const submitted = status?.currentRun?.applicationsSubmitted ?? 0
+  const target = status?.currentRun?.targetApplications ?? form?.dailyTarget ?? 50
+
+  async function startHunt() {
+    setBusy(true)
+    setError('')
+    try {
+      const { data } = await api.post<HuntStartResult>('/hunt/start', {})
+      setWarnings(data.warnings)
+      const { data: fresh } = await api.get<HuntStatus>('/hunt/status')
+      setStatus(fresh)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not start the hunt.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function stopHunt() {
+    setBusy(true)
+    setError('')
+    try {
+      await api.post('/hunt/stop')
+      const { data: fresh } = await api.get<HuntStatus>('/hunt/status')
+      setStatus(fresh)
+      setWarnings([])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not stop the hunt.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function saveSpec() {
+    if (!form) return
+    setSaving(true)
+    setSaved(false)
+    setError('')
+    try {
+      const { data } = await api.put<HuntSpec>('/hunt/spec', form)
+      setForm(toForm(data))
+      setSaved(true)
+      setTimeout(() => setSaved(false), 1800)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save the spec.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function togglePortal(portal: Portal) {
+    // Flip it on screen now; roll back if the server says no.
+    setPortals((list) =>
+      list.map((p) => (p.id === portal.id ? { ...p, connected: !p.connected } : p)),
+    )
+    try {
+      const { data } = await api.put<Portal>(`/portals/${portal.id}`, {
+        connected: !portal.connected,
+      })
+      setPortals((list) => list.map((p) => (p.id === data.id ? data : p)))
+    } catch (err) {
+      setPortals((list) =>
+        list.map((p) => (p.id === portal.id ? { ...p, connected: portal.connected } : p)),
+      )
+      setError(err instanceof Error ? err.message : 'Could not update that portal.')
+    }
+  }
+
+  async function uploadResume(file: File) {
+    setError('')
+    const body = new FormData()
+    body.append('file', file)
+    body.append('isBase', 'true')
+    try {
+      const { data } = await api.upload<Resume>('/resumes', body)
+      setBaseResume(data)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'The upload failed.')
+    }
+  }
+
+  async function previewResume() {
+    if (!baseResume) return
+    try {
+      const { data } = await api.get<{ url: string }>(`/resumes/${baseResume.id}/download`)
+      window.open(data.url, '_blank', 'noopener')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not open the resume.')
+    }
+  }
+
+  if (!form || !status) {
+    return (
+      <div className="flex flex-col items-center gap-3 py-24">
+        <Mascot mood="sleepy" size={110} />
+        <p className="font-display font-semibold text-ink-soft">
+          {error || 'sharpening the spears…'}
+        </p>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-7">
@@ -44,6 +188,12 @@ export function Hunt() {
         sub="Tell Hunty what you want. Hunty does the boring part."
       />
 
+      {error && (
+        <Card className="bg-coral/15!">
+          <p className="text-sm font-semibold">{error}</p>
+        </Card>
+      )}
+
       {/* control panel */}
       <Card className={running ? 'bg-mint/25!' : 'bg-butter-300!'}>
         <div className="flex flex-wrap items-center gap-5">
@@ -52,23 +202,38 @@ export function Hunt() {
             <Chip tone={running ? 'mint' : 'white'}>
               {running ? '● hunting right now' : '○ idle'}
             </Chip>
+            {status.queueStubbed && (
+              <Chip tone="white" className="ml-2">
+                worker coming soon
+              </Chip>
+            )}
             <h3 className="mt-2 text-3xl">
               {running ? 'Out in the wild.' : 'Ready when you are.'}
             </h3>
             <p className="mt-1 text-sm font-semibold text-ink-soft">
-              {connected} portals connected · target {target} applications a day
+              {connected} portals connected · target {form.dailyTarget} applications a day
             </p>
             <div className="mt-3 max-w-sm">
-              <Progress value={running ? 68 : 0} max={target} />
+              <Progress value={submitted} max={target} />
             </div>
+            {warnings.length > 0 && (
+              <ul className="mt-3 space-y-1">
+                {warnings.map((w) => (
+                  <li key={w} className="text-xs font-semibold text-ink-soft">
+                    ⚠️ {w}
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
           <Button
             size="lg"
             variant={running ? 'danger' : 'blue'}
-            onClick={() => setRunning((r) => !r)}
+            disabled={busy}
+            onClick={running ? stopHunt : startHunt}
             icon={<span>{running ? '🛑' : '🚀'}</span>}
           >
-            {running ? 'Call Hunty back' : 'Start the hunt'}
+            {busy ? '…' : running ? 'Call Hunty back' : 'Start the hunt'}
           </Button>
         </div>
       </Card>
@@ -92,44 +257,68 @@ export function Hunt() {
       <div className="grid gap-6 lg:grid-cols-2">
         {/* spec */}
         <section>
-          <SectionTitle emoji="📝" title="Your spec" sub="what counts as a good job" />
+          <SectionTitle
+            emoji="📝"
+            title="Your spec"
+            sub="what counts as a good job"
+            action={
+              <Button size="sm" onClick={saveSpec} disabled={saving} icon={<span>💾</span>}>
+                {saving ? 'Saving…' : saved ? 'Saved ✓' : 'Save spec'}
+              </Button>
+            }
+          />
           <Card className="space-y-4">
             <Field label="Roles you want" hint="comma separated, most wanted first">
               <Input
-                key={kit.roles}
-                defaultValue={
-                  kit.roles || 'Senior Frontend Engineer, Full-stack Engineer, Product Engineer'
-                }
+                value={form.roles}
+                onChange={(e) => setForm({ ...form, roles: e.target.value })}
+                placeholder="Senior Frontend Engineer, Full-stack Engineer"
               />
             </Field>
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Preferred companies">
                 <Input
-                  key={kit.companies}
-                  defaultValue={kit.companies || 'Stripe, Linear, Vercel, Razorpay'}
+                  value={form.dreamCompanies}
+                  onChange={(e) => setForm({ ...form, dreamCompanies: e.target.value })}
+                  placeholder="Stripe, Linear, Vercel, Razorpay"
                 />
               </Field>
               <Field label="Locations">
                 <Input
-                  key={kit.locations}
-                  defaultValue={kit.locations || 'Remote, Bengaluru, Pune'}
+                  value={form.locations}
+                  onChange={(e) => setForm({ ...form, locations: e.target.value })}
+                  placeholder="Remote, Bengaluru, Pune"
                 />
               </Field>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Minimum match score" hint="skip anything weaker">
-                <Input type="number" defaultValue={70} />
+                <Input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={form.minMatchScore}
+                  onChange={(e) =>
+                    setForm({ ...form, minMatchScore: Number(e.target.value) || 0 })
+                  }
+                />
               </Field>
               <Field label="Applications per day">
                 <Input
                   type="number"
-                  value={target}
-                  onChange={(e) => setTarget(Number(e.target.value) || 0)}
+                  min={1}
+                  max={500}
+                  value={form.dailyTarget}
+                  onChange={(e) => setForm({ ...form, dailyTarget: Number(e.target.value) || 1 })}
                 />
               </Field>
             </div>
             <Field label="Deal breakers" hint="Hunty walks away from these">
-              <Input defaultValue="on-site only, unpaid, <2 yrs experience required" />
+              <Input
+                value={form.dealBreakers}
+                onChange={(e) => setForm({ ...form, dealBreakers: e.target.value })}
+                placeholder="on-site only, unpaid, <2 yrs experience required"
+              />
             </Field>
           </Card>
         </section>
@@ -140,15 +329,47 @@ export function Hunt() {
             <SectionTitle emoji="📄" title="Base resume" sub="every variant starts here" />
             <Card className="border-dashed! bg-butter-50! text-center">
               <div className="animate-bob text-4xl">📄</div>
-              <div className="mt-2 font-display font-bold">
-                {kit.resumeName || 'ayan—resume—2026.pdf'}
-              </div>
-              <div className="text-xs text-ink-soft">last parsed 2 days ago · 34 skills found</div>
+              {baseResume ? (
+                <>
+                  <div className="mt-2 font-display font-bold">{baseResume.fileName}</div>
+                  <div className="text-xs text-ink-soft">
+                    {baseResume.parsedSkills.length > 0
+                      ? `${baseResume.parsedSkills.length} skills found`
+                      : 'stored'}{' '}
+                    ·{' '}
+                    {baseResume.parsedAt
+                      ? `parsed ${new Date(baseResume.parsedAt).toLocaleDateString()}`
+                      : 'parse pending'}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="mt-2 font-display font-bold">No resume yet</div>
+                  <div className="text-xs text-ink-soft">
+                    Hunty needs one before it can tailor variants
+                  </div>
+                </>
+              )}
               <div className="mt-3 flex justify-center gap-2">
-                <Button size="sm">Replace</Button>
-                <Button size="sm" variant="ghost">
-                  Preview
+                <input
+                  ref={fileInput}
+                  type="file"
+                  accept=".pdf,.doc,.docx"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0]
+                    if (file) void uploadResume(file)
+                    e.target.value = ''
+                  }}
+                />
+                <Button size="sm" onClick={() => fileInput.current?.click()}>
+                  {baseResume ? 'Replace' : 'Upload'}
                 </Button>
+                {baseResume && (
+                  <Button size="sm" variant="ghost" onClick={previewResume}>
+                    Preview
+                  </Button>
+                )}
               </div>
             </Card>
           </div>
@@ -172,22 +393,12 @@ export function Hunt() {
                       {p.connected ? `${p.jobsFound} jobs found` : 'not connected'}
                     </div>
                   </div>
-                  <Toggle
-                    label={p.name}
-                    on={p.connected}
-                    onClick={() =>
-                      setPortals((list) =>
-                        list.map((x) =>
-                          x.id === p.id ? { ...x, connected: !x.connected } : x,
-                        ),
-                      )
-                    }
-                  />
+                  <Toggle label={p.name} on={p.connected} onClick={() => void togglePortal(p)} />
                 </div>
               ))}
-              <Button size="sm" variant="ghost" className="w-full">
-                + Add another portal
-              </Button>
+              <p className="pt-1 text-center text-xs font-semibold text-ink-soft">
+                Toggles save straight to the API at {BASE_URL}
+              </p>
             </Card>
           </div>
         </section>

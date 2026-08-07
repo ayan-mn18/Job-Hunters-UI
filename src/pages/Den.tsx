@@ -1,27 +1,61 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../auth/context'
 import { Mascot } from '../components/Mascot'
-import { Button, Card, Chip, Progress, SectionTitle, Stat } from '../components/ui'
-import { activity, applications, HUNTER, portals, referrals } from '../data/mock'
+import { Button, Card, Chip, Empty, Progress, SectionTitle, Stat } from '../components/ui'
+import { api } from '../lib/api'
+import type { Dashboard } from '../lib/types'
 
 const BANNER_KEY = 'jobhunters.demo.firstRunBannerDismissed'
 
 export function Den() {
   const { user } = useAuth()
-  const pending = referrals.filter((r) => !r.handled).length
-  const live = portals.filter((p) => p.connected)
-  const scraped = live.reduce((sum, p) => sum + p.jobsFound, 0)
+  const [dash, setDash] = useState<Dashboard | null>(null)
+  const [error, setError] = useState('')
 
-  const firstName = (user?.name ?? HUNTER.name).split(' ')[0]
+  const firstName = (user?.name ?? 'Hunter').split(' ')[0]
   const [showBanner, setShowBanner] = useState(
     () => localStorage.getItem(BANNER_KEY) !== '1',
   )
+
+  useEffect(() => {
+    let cancelled = false
+    api
+      .get<Dashboard>('/dashboard')
+      .then(({ data }) => {
+        if (!cancelled) setDash(data)
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load the den.')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   function dismissBanner() {
     localStorage.setItem(BANNER_KEY, '1')
     setShowBanner(false)
   }
+
+  if (error) {
+    return (
+      <Card>
+        <Empty emoji="😵" title="The den did not load" sub={error} />
+      </Card>
+    )
+  }
+
+  if (!dash) {
+    return (
+      <div className="flex flex-col items-center gap-3 py-24">
+        <Mascot mood="sleepy" size={110} />
+        <p className="font-display font-semibold text-ink-soft">counting today&apos;s pelts…</p>
+      </div>
+    )
+  }
+
+  const { hunter, stats, recentApplications, activity } = dash
 
   return (
     <div className="space-y-7">
@@ -51,17 +85,17 @@ export function Den() {
             <h1 className="mt-2 text-4xl leading-tight">
               Hey {firstName} — Hunty bagged{' '}
               <span className="underline decoration-sky-pop decoration-[5px] underline-offset-4">
-                {HUNTER.appliedToday} jobs
+                {hunter.appliedToday} jobs
               </span>{' '}
               already.
             </h1>
             <p className="mt-2 max-w-lg text-[15px] font-semibold text-ink-soft">
-              {HUNTER.dailyTarget - HUNTER.appliedToday} to go before the daily target.
-              You have {pending} people waiting on a referral.
+              {hunter.remainingToday} to go before the daily target. You have{' '}
+              {stats.referralsWaiting} people waiting on a referral.
             </p>
 
             <div className="mt-4 max-w-md">
-              <Progress value={HUNTER.appliedToday} max={HUNTER.dailyTarget} />
+              <Progress value={hunter.appliedToday} max={hunter.dailyTarget} />
             </div>
 
             <div className="mt-4 flex flex-wrap gap-2.5">
@@ -72,7 +106,7 @@ export function Den() {
               </Link>
               <Link to="/app/referrals">
                 <Button size="lg" variant="ghost" icon={<span>🤝</span>}>
-                  {pending} referrals waiting
+                  {stats.referralsWaiting} referrals waiting
                 </Button>
               </Link>
             </div>
@@ -84,16 +118,21 @@ export function Den() {
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <Stat
           label="Applied today"
-          value={HUNTER.appliedToday}
-          hint="+22 since breakfast"
+          value={stats.appliedToday}
+          hint={`of ${hunter.dailyTarget} daily target`}
           emoji="📮"
           tone="bg-butter-300"
         />
-        <Stat label="Jobs scraped" value={scraped} hint={`${live.length} portals live`} emoji="🔎" />
-        <Stat label="Interviews" value={3} hint="1 this week" emoji="🎤" />
+        <Stat
+          label="Jobs scraped"
+          value={stats.jobsScraped}
+          hint={`${stats.portalsConnected} portals live`}
+          emoji="🔎"
+        />
+        <Stat label="Interviews" value={stats.interviews} hint="the ones that matter" emoji="🎤" />
         <Stat
           label="Referrals waiting"
-          value={pending}
+          value={stats.referralsWaiting}
           hint="drafts ready to send"
           emoji="🤝"
           tone="bg-sky-soft"
@@ -115,47 +154,61 @@ export function Den() {
               </Link>
             }
           />
-          <div className="space-y-3">
-            {applications.slice(0, 4).map((a) => (
-              <Card key={a.id} className="toon-lift flex items-center gap-3.5 p-4">
-                <div className="toon-sm flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-butter-200 text-2xl">
-                  {a.logo}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate font-display font-semibold">{a.role}</div>
-                  <div className="truncate text-sm text-ink-soft">
-                    {a.company} · {a.location}
+          {recentApplications.length === 0 ? (
+            <Card>
+              <Empty
+                emoji="🫙"
+                title="Nothing sent yet"
+                sub="Start a hunt and the latest applications land here."
+              />
+            </Card>
+          ) : (
+            <div className="space-y-3">
+              {recentApplications.map((a) => (
+                <Card key={a.id} className="toon-lift flex items-center gap-3.5 p-4">
+                  <div className="toon-sm flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-butter-200 text-2xl">
+                    {a.logo}
                   </div>
-                </div>
-                <div className="hidden text-right sm:block">
-                  <div className="font-display text-lg leading-none font-bold">
-                    {a.matchScore}%
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate font-display font-semibold">{a.role}</div>
+                    <div className="truncate text-sm text-ink-soft">
+                      {a.company} · {a.location}
+                    </div>
                   </div>
-                  <div className="text-[11px] font-semibold text-ink-soft">match</div>
-                </div>
-              </Card>
-            ))}
-          </div>
+                  <div className="hidden text-right sm:block">
+                    <div className="font-display text-lg leading-none font-bold">
+                      {a.matchScore}%
+                    </div>
+                    <div className="text-[11px] font-semibold text-ink-soft">match</div>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          )}
         </section>
 
         <section>
           <SectionTitle emoji="🐾" title="Hunty's trail" sub="what happened recently" />
           <Card className="p-0!">
-            <ul>
-              {activity.map((a, i) => (
-                <li
-                  key={a.text}
-                  className={[
-                    'flex items-start gap-3 p-4',
-                    i < activity.length - 1 ? 'border-b-[3px] border-dashed border-butter-300' : '',
-                  ].join(' ')}
-                >
-                  <span className="text-xl leading-none">{a.emoji}</span>
-                  <span className="flex-1 text-sm font-semibold">{a.text}</span>
-                  <span className="text-xs whitespace-nowrap text-ink-soft">{a.time}</span>
-                </li>
-              ))}
-            </ul>
+            {activity.length === 0 ? (
+              <Empty emoji="🐾" title="No tracks yet" sub="Hunty's doings will show up here." />
+            ) : (
+              <ul>
+                {activity.map((a, i) => (
+                  <li
+                    key={a.id}
+                    className={[
+                      'flex items-start gap-3 p-4',
+                      i < activity.length - 1 ? 'border-b-[3px] border-dashed border-butter-300' : '',
+                    ].join(' ')}
+                  >
+                    <span className="text-xl leading-none">{a.emoji}</span>
+                    <span className="flex-1 text-sm font-semibold">{a.text}</span>
+                    <span className="text-xs whitespace-nowrap text-ink-soft">{a.time}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </Card>
 
           <Card className="mt-4 bg-butter-200!" tilt={-1}>

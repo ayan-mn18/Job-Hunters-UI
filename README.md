@@ -7,15 +7,19 @@ Cartoon-styled frontend for Job Hunters. Two jobs to do:
 2. **Referrals** — a daily pile of every LinkedIn DM and email asking you for a
    referral, each one with an auto-drafted recommendation you can copy and send.
 
-This repo is **UI only** right now. All data comes from `src/data/mock.ts` and is
-meant to be swapped for calls to [Job-Hunters-api](https://github.com/ayan-mn18/Job-Hunters-api).
+The UI talks to [Job-Hunters-api](https://github.com/ayan-mn18/Job-Hunters-api) for
+everything — auth, dashboard, hunt spec, applications, referrals, kit. All calls go
+through one client in `src/lib/api.ts`.
 
 ## Run it
 
 ```bash
 npm install
-npm run dev
+npm run dev   # serves on http://localhost:6000
 ```
+
+`.env` holds one variable: `VITE_API_URL=http://localhost:6060`, where the API
+listens. Start the API first (its README covers that), then this dev server.
 
 ## Stack
 
@@ -52,29 +56,27 @@ Hunty, the mascot, is inline SVG in `src/components/Mascot.tsx` with four moods:
 | `/app/referrals` | Referrals    | Day-by-day referral requests and generated drafts     |
 | `/app/profile`   | My Kit       | Every detail a job form ever asks for                 |
 
-## Demo auth
+## Auth
 
-There is no server, so `src/auth/` fakes it:
+Real accounts, backed by the API:
 
-- **Any** email and password logs you in — the form only checks both are non-empty.
+- `POST /auth/signup` and `/auth/login` return an access token (15 min) plus a
+  refresh token (30 days); both live in localStorage.
+- On boot the `AuthProvider` validates the stored token with `GET /me`. Any 401,
+  anywhere, triggers one silent `POST /auth/refresh` and the request is retried;
+  if the refresh token is dead too, the session is dropped and the guards route
+  to `/login`.
 - Signing up marks the account as not-onboarded, which sends you to `/welcome`.
-  Finishing the wizard flips the flag, so you only see it once.
-- The session is a single localStorage key (`jobhunters.demo.user`). Onboarding
-  answers are stored on it and prefill the Hunt and My Kit pages.
-- **Reset demo data** in the avatar menu clears the key and drops you back on the
-  landing page — use it to replay the first-run flow.
+  Finishing the wizard posts `POST /me/onboarding` and flips the flag.
+- A seeded demo account exists for poking around: `demo@jobhunters.test` /
+  `hunty-demo-2026` (see the API's seed script).
 
 Route guards live in `src/auth/guards.tsx`: `RequireAuth` protects `/app/*`,
 `RequireOnboarding` protects `/welcome`, and `RedirectIfSignedIn` keeps
 signed-in users off the landing and auth pages.
 
-When the API arrives, replace the bodies in `AuthProvider` with real calls —
-the surface (`signIn`, `signUp`, `signOut`, `completeOnboarding`) should not
-need to change.
-
 ## Next
 
-- Replace `src/data/mock.ts` with the API client
-- Real auth, plus LinkedIn + Gmail OAuth
-- Resume upload + parse preview
-- Live run log while a hunt is in progress
+- LinkedIn + Gmail OAuth
+- Live run log while a hunt is in progress (the hunt worker is stubbed API-side)
+- Resume parse preview once the real parser lands

@@ -1,29 +1,24 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Mascot } from '../components/Mascot'
 import { Confetti } from '../components/Confetti'
 import { Button, Card, Chip, Field, Input, Progress, Toggle } from '../components/ui'
 import { useAuth, type KitDraft } from '../auth/context'
-import { portals as allPortals } from '../data/mock'
+import { api } from '../lib/api'
+import type { Portal, Resume, ResumeAutofillResult } from '../lib/types'
 
 const TOTAL = 6
-
-const parsedSkills = [
-  'React',
-  'TypeScript',
-  'Node.js',
-  'PostgreSQL',
-  'AWS',
-  'Docker',
-  'GraphQL',
-  'Redis',
-]
 
 export function Onboarding() {
   const { user, completeOnboarding, signOut } = useAuth()
   const navigate = useNavigate()
 
   const [step, setStep] = useState(1)
+  const [portals, setPortals] = useState<Portal[]>([])
+  const [finishing, setFinishing] = useState(false)
+  const [uploadedResume, setUploadedResume] = useState<Resume | null>(null)
+  const [autofillNotice, setAutofillNotice] = useState('')
+  const [error, setError] = useState('')
   const [draft, setDraft] = useState<KitDraft>({
     roles: '',
     locations: '',
@@ -36,16 +31,51 @@ export function Onboarding() {
     resumeName: '',
   })
 
+  // The portal picker shows the real catalogue, not a hard-coded list.
+  useEffect(() => {
+    api
+      .get<Portal[]>('/portals')
+      .then(({ data }) => setPortals(data))
+      .catch(() => setPortals([]))
+  }, [])
+
   const set = <K extends keyof KitDraft>(key: K, value: KitDraft[K]) =>
     setDraft((d) => ({ ...d, [key]: value }))
 
   const next = () => setStep((s) => Math.min(TOTAL, s + 1))
   const back = () => setStep((s) => Math.max(1, s - 1))
 
-  function finish() {
-    completeOnboarding(draft)
-    navigate('/app', { replace: true })
+  function applyResumeAutofill(result: ResumeAutofillResult) {
+    setDraft((current) => ({
+      ...current,
+      roles: current.roles.trim() ? current.roles : result.roles.join(', '),
+      phone: current.phone.trim() ? current.phone : (result.kit.phone ?? ''),
+      city: current.city.trim() ? current.city : (result.kit.city ?? ''),
+    }))
+    const count =
+      result.applied.fields.length + result.applied.skills + result.applied.employments
+    setAutofillNotice(
+      count > 0
+        ? `Filled ${count} resume detail${count === 1 ? '' : 's'}. Review them before finishing.`
+        : 'Resume details already match your kit.',
+    )
   }
+
+  async function finish() {
+    setFinishing(true)
+    setError('')
+    try {
+      await completeOnboarding(draft)
+      navigate('/app', { replace: true })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save your setup.')
+      setFinishing(false)
+    }
+  }
+
+  const jobsWaiting = portals
+    .filter((p) => draft.portals.includes(p.id))
+    .reduce((sum, p) => sum + p.jobsFound, 0)
 
   return (
     <div className="min-h-screen">
@@ -73,14 +103,31 @@ export function Onboarding() {
           <Progress value={step} max={TOTAL} />
         </div>
 
+        {error && (
+          <Card className="mb-4 bg-coral/15!">
+            <p className="text-sm font-semibold">{error}</p>
+          </Card>
+        )}
+
         <div key={step} className="animate-pop-in">
           {step === 1 && <StepWelcome name={user?.name ?? 'Hunter'} onNext={next} />}
           {step === 2 && (
-            <StepResume value={draft.resumeName} onPick={(n) => set('resumeName', n)} />
+            <StepResume
+              value={draft.resumeName}
+              resume={uploadedResume}
+              notice={autofillNotice}
+              onPick={(resume) => {
+                set('resumeName', resume.fileName)
+                setUploadedResume(resume)
+                setAutofillNotice('')
+              }}
+              onAutofill={applyResumeAutofill}
+            />
           )}
           {step === 3 && <StepSpec draft={draft} set={set} />}
           {step === 4 && (
             <StepPortals
+              portals={portals}
               picked={draft.portals}
               toggle={(id) =>
                 set(
@@ -93,7 +140,9 @@ export function Onboarding() {
             />
           )}
           {step === 5 && <StepKit draft={draft} set={set} />}
-          {step === 6 && <StepDone draft={draft} name={user?.name ?? 'Hunter'} />}
+          {step === 6 && (
+            <StepDone draft={draft} name={user?.name ?? 'Hunter'} jobsWaiting={jobsWaiting} />
+          )}
         </div>
 
         {/* footer controls — step 1 and 6 carry their own buttons */}
@@ -119,8 +168,14 @@ export function Onboarding() {
             <Button variant="ghost" onClick={back}>
               ← Back
             </Button>
-            <Button size="lg" variant="blue" onClick={finish} icon={<span>🚀</span>}>
-              Take me to my den
+            <Button
+              size="lg"
+              variant="blue"
+              onClick={finish}
+              disabled={finishing}
+              icon={<span>🚀</span>}
+            >
+              {finishing ? 'Saving your den…' : 'Take me to my den'}
             </Button>
           </div>
         )}
@@ -161,63 +216,143 @@ function StepWelcome({ name, onNext }: { name: string; onNext: () => void }) {
   )
 }
 
-function StepResume({ value, onPick }: { value: string; onPick: (name: string) => void }) {
-  const [parsing, setParsing] = useState(false)
+function StepResume({
+  value,
+  resume,
+  notice,
+  onPick,
+  onAutofill,
+}: {
+  value: string
+  resume: Resume | null
+  notice: string
+  onPick: (resume: Resume) => void
+  onAutofill: (result: ResumeAutofillResult) => void
+}) {
+  const [uploading, setUploading] = useState(false)
+  const [autofilling, setAutofilling] = useState(false)
+  const [error, setError] = useState('')
+  const fileInput = useRef<HTMLInputElement>(null)
 
-  function fakeUpload() {
-    setParsing(true)
-    setTimeout(() => {
-      setParsing(false)
-      onPick('ayan—resume—2026.pdf')
-    }, 1300)
+  async function upload(file: File) {
+    setUploading(true)
+    setError('')
+    const body = new FormData()
+    body.append('file', file)
+    body.append('isBase', 'true')
+    try {
+      const { data } = await api.upload<Resume>('/resumes', body)
+      onPick(data)
+      if (data.parseStatus === 'failed') {
+        setError(data.parseError || 'I could not read this resume. Try a PDF or DOCX.')
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'The upload failed. Try again.')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  async function autofill() {
+    if (!resume) return
+    setAutofilling(true)
+    setError('')
+    try {
+      const { data } = await api.post<ResumeAutofillResult>(`/resumes/${resume.id}/autofill`)
+      onAutofill(data)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not autofill from this resume.')
+    } finally {
+      setAutofilling(false)
+    }
   }
 
   return (
     <Card>
       <h1 className="text-3xl">Drop your resume in</h1>
       <p className="mt-1.5 font-semibold text-ink-soft">
-        I read it once, then rewrite it for every job I find.
+        Upload once. Then choose what I should fill for you.
       </p>
+
+      <input
+        ref={fileInput}
+        type="file"
+        accept=".pdf,.docx,.txt"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0]
+          if (file) void upload(file)
+          e.target.value = ''
+        }}
+      />
+
+      {error && <p className="mt-3 text-sm font-semibold text-coral">{error}</p>}
 
       {!value ? (
         <button
-          onClick={fakeUpload}
-          disabled={parsing}
+          onClick={() => fileInput.current?.click()}
+          disabled={uploading}
           className="toon-sm mt-5 w-full rounded-blob border-dashed! bg-butter-50 py-12 text-center"
         >
-          <div className={parsing ? 'animate-wiggle text-5xl' : 'animate-bob text-5xl'}>
-            {parsing ? '🔍' : '📄'}
+          <div className={uploading ? 'animate-wiggle text-5xl' : 'animate-bob text-5xl'}>
+            {uploading ? '🔍' : '📄'}
           </div>
           <div className="mt-3 font-display text-lg font-bold">
-            {parsing ? 'Reading your resume…' : 'Click to pick a PDF'}
+            {uploading ? 'Reading your resume…' : 'Click to pick a resume'}
           </div>
           <div className="text-sm text-ink-soft">
-            {parsing ? 'pulling out skills, titles and years' : 'PDF or DOCX, up to 5 MB'}
+            {uploading ? 'pulling out skills, roles and contact details' : 'PDF, DOCX or TXT, up to 5 MB'}
           </div>
         </button>
       ) : (
-        <div className="animate-pop-in mt-5">
+        <div className="animate-pop-in mt-5 space-y-4">
           <div className="toon-sm flex items-center gap-3 rounded-blob bg-mint/25 p-4">
             <span className="text-3xl">✅</span>
             <div className="min-w-0 flex-1">
               <div className="font-display font-bold">{value}</div>
               <div className="text-sm text-ink-soft">
-                parsed · 8 skills, 2 roles, 4 years found
+                uploaded to your den
+                {resume && resume.parsedSkills.length > 0
+                  ? ` · ${resume.parsedSkills.length} skills found`
+                  : ''}
               </div>
             </div>
-            <Button size="sm" variant="ghost" onClick={() => onPick('')}>
+            <Button size="sm" variant="ghost" onClick={() => fileInput.current?.click()}>
               Replace
             </Button>
           </div>
 
-          <div className="mt-4">
-            <div className="mb-2 font-display text-sm font-bold">Skills I picked up</div>
-            <div className="flex flex-wrap gap-2">
-              {parsedSkills.map((s) => (
-                <Chip key={s}>{s}</Chip>
-              ))}
+          {resume?.autofillAvailable && (
+            <div className="rounded-blob bg-sky/15 p-4">
+              <div className="font-display font-bold">Want me to fill the boring bits?</div>
+              <p className="mt-1 text-sm font-semibold text-ink-soft">
+                Adds blank roles, contact details, skills and employment history. Your edits stay untouched.
+              </p>
+              <Button
+                className="mt-3"
+                size="sm"
+                variant="blue"
+                onClick={autofill}
+                disabled={autofilling}
+                icon={<span>✨</span>}
+              >
+                {autofilling ? 'Filling from resume…' : 'Autofill from resume'}
+              </Button>
             </div>
-          </div>
+          )}
+
+          {notice && <p className="text-sm font-semibold text-moss">{notice}</p>}
+
+          {resume && resume.parsedSkills.length > 0 && (
+            <div>
+              <div className="mb-2 font-display text-sm font-bold">Skills I picked up</div>
+              <div className="flex flex-wrap gap-2">
+                {resume.parsedSkills.map((skill) => (
+                  <Chip key={skill}>{skill}</Chip>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </Card>
@@ -293,7 +428,15 @@ function StepSpec({
   )
 }
 
-function StepPortals({ picked, toggle }: { picked: string[]; toggle: (id: string) => void }) {
+function StepPortals({
+  portals,
+  picked,
+  toggle,
+}: {
+  portals: Portal[]
+  picked: string[]
+  toggle: (id: string) => void
+}) {
   return (
     <Card>
       <h1 className="text-3xl">Where should I hunt?</h1>
@@ -301,24 +444,30 @@ function StepPortals({ picked, toggle }: { picked: string[]; toggle: (id: string
         Pick the portals you already have accounts on. You can connect the rest later.
       </p>
 
-      <div className="mt-5 grid gap-2.5 sm:grid-cols-2">
-        {allPortals.map((p) => {
-          const on = picked.includes(p.id)
-          return (
-            <div
-              key={p.id}
-              className={[
-                'toon-sm flex items-center gap-3 rounded-2xl px-3 py-2.5',
-                on ? 'bg-butter-300' : 'bg-butter-50',
-              ].join(' ')}
-            >
-              <span className="text-xl">{p.emoji}</span>
-              <span className="flex-1 font-display text-sm font-semibold">{p.name}</span>
-              <Toggle on={on} onClick={() => toggle(p.id)} label={p.name} />
-            </div>
-          )
-        })}
-      </div>
+      {portals.length === 0 ? (
+        <p className="mt-5 text-sm font-semibold text-ink-soft">
+          Loading the portal catalogue…
+        </p>
+      ) : (
+        <div className="mt-5 grid gap-2.5 sm:grid-cols-2">
+          {portals.map((p) => {
+            const on = picked.includes(p.id)
+            return (
+              <div
+                key={p.id}
+                className={[
+                  'toon-sm flex items-center gap-3 rounded-2xl px-3 py-2.5',
+                  on ? 'bg-butter-300' : 'bg-butter-50',
+                ].join(' ')}
+              >
+                <span className="text-xl">{p.emoji}</span>
+                <span className="flex-1 font-display text-sm font-semibold">{p.name}</span>
+                <Toggle on={on} onClick={() => toggle(p.id)} label={p.name} />
+              </div>
+            )
+          })}
+        </div>
+      )}
 
       <p className="mt-4 text-xs font-semibold text-ink-soft">
         {picked.length} picked · connecting the accounts themselves comes later
@@ -376,12 +525,20 @@ function StepKit({
   )
 }
 
-function StepDone({ draft, name }: { draft: KitDraft; name: string }) {
+function StepDone({
+  draft,
+  name,
+  jobsWaiting,
+}: {
+  draft: KitDraft
+  name: string
+  jobsWaiting: number
+}) {
   const [count, setCount] = useState(0)
 
   // Little counter roll-up, so the finish line feels like something happened.
   useEffect(() => {
-    const target = 1110
+    const target = Math.max(jobsWaiting, 1)
     const id = setInterval(() => {
       setCount((c) => {
         const nextValue = c + Math.ceil((target - c) / 8)
@@ -389,7 +546,7 @@ function StepDone({ draft, name }: { draft: KitDraft; name: string }) {
       })
     }, 45)
     return () => clearInterval(id)
-  }, [])
+  }, [jobsWaiting])
 
   return (
     <Card className="bg-butter-300! text-center">

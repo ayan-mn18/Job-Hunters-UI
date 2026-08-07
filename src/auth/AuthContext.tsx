@@ -1,115 +1,97 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import {
+  api,
+  clearTokens,
+  getAccessToken,
+  getRefreshToken,
+  SESSION_EXPIRED_EVENT,
+  storeTokens,
+} from '../lib/api'
+import type { AuthSession } from '../lib/types'
 import { AuthContext, type KitDraft, type User } from './context'
 
 /**
- * Demo auth. There is no server yet — any email + password gets you in.
- * The session lives in localStorage so a refresh keeps you signed in and
- * the first-run onboarding only fires once per account.
+ * Real auth against Job-Hunters-api.
+ *
+ * Tokens live in localStorage (see `lib/api.ts`). On boot, a stored access
+ * token is validated with `GET /me` — which also quietly refreshes it via the
+ * client's 401 → /auth/refresh path — and the returned user becomes the
+ * session. No token, no request: straight to the landing page.
  */
-
-const STORAGE_KEY = 'jobhunters.demo.user'
-
-const avatars = ['🧑‍🚀', '🦝', '🐼', '🦊', '🐙', '🦉', '🐝', '🦄']
-
-function avatarFor(email: string) {
-  const sum = [...email].reduce((n, c) => n + c.charCodeAt(0), 0)
-  return avatars[sum % avatars.length]
-}
-
-function nameFromEmail(email: string) {
-  const handle = email.split('@')[0].replace(/[._-]+/g, ' ').trim()
-  return (
-    handle
-      .split(' ')
-      .filter(Boolean)
-      .map((w) => w[0].toUpperCase() + w.slice(1))
-      .join(' ') || 'Hunter'
-  )
-}
-
-function load(): User | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    return raw ? (JSON.parse(raw) as User) : null
-  } catch {
-    return null
-  }
-}
-
-function save(user: User | null) {
-  if (user) localStorage.setItem(STORAGE_KEY, JSON.stringify(user))
-  else localStorage.removeItem(STORAGE_KEY)
-}
-
-/** Pretend the network is doing something, so the buttons get to show a state. */
-const fakeDelay = (ms = 700) => new Promise((r) => setTimeout(r, ms))
-
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [ready, setReady] = useState(false)
 
   useEffect(() => {
-    setUser(load())
-    setReady(true)
-  }, [])
+    let cancelled = false
 
-  const signIn = useCallback(async (email: string, _password: string) => {
-    await fakeDelay()
-    // A returning account keeps its onboarding; anything else is treated as known.
-    const existing = load()
-    const next: User =
-      existing && existing.email.toLowerCase() === email.toLowerCase()
-        ? existing
-        : {
-            name: nameFromEmail(email),
-            email,
-            avatar: avatarFor(email),
-            onboarded: true,
-            kit: {},
-            joinedAt: new Date().toISOString(),
-          }
-    save(next)
-    setUser(next)
-    return next
-  }, [])
-
-  const signUp = useCallback(async (name: string, email: string, _password: string) => {
-    await fakeDelay(900)
-    const next: User = {
-      name: name.trim() || nameFromEmail(email),
-      email,
-      avatar: avatarFor(email),
-      onboarded: false,
-      kit: {},
-      joinedAt: new Date().toISOString(),
+    async function boot() {
+      if (!getAccessToken()) {
+        setReady(true)
+        return
+      }
+      try {
+        const { data } = await api.get<User>('/me')
+        if (!cancelled) setUser(data)
+      } catch {
+        // The refresh attempt already ran inside the client. Still failed —
+        // so the session is gone and the guards will route to /login.
+        clearTokens()
+      } finally {
+        if (!cancelled) setReady(true)
+      }
     }
-    save(next)
-    setUser(next)
-    return next
+
+    void boot()
+
+    const onExpired = () => setUser(null)
+    window.addEventListener(SESSION_EXPIRED_EVENT, onExpired)
+    return () => {
+      cancelled = true
+      window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired)
+    }
   }, [])
 
-  const completeOnboarding = useCallback((kit: Partial<KitDraft>) => {
-    setUser((prev) => {
-      if (!prev) return prev
-      const next = { ...prev, onboarded: true, kit: { ...prev.kit, ...kit } }
-      save(next)
-      return next
-    })
+  const applySession = useCallback((session: AuthSession): User => {
+    storeTokens(session)
+    setUser(session.user)
+    return session.user
+  }, [])
+
+  const signIn = useCallback(
+    async (email: string, password: string) => {
+      const { data } = await api.post<AuthSession>('/auth/login', { email, password })
+      return applySession(data)
+    },
+    [applySession],
+  )
+
+  const signUp = useCallback(
+    async (name: string, email: string, password: string) => {
+      const { data } = await api.post<AuthSession>('/auth/signup', { name, email, password })
+      return applySession(data)
+    },
+    [applySession],
+  )
+
+  const completeOnboarding = useCallback(async (kit: Partial<KitDraft>) => {
+    const { data } = await api.post<User>('/me/onboarding', kit)
+    setUser(data)
   }, [])
 
   const signOut = useCallback(() => {
-    setUser(null)
-    save(null)
-  }, [])
-
-  const resetDemo = useCallback(() => {
-    localStorage.clear()
+    // Best effort: even if the request fails, this device forgets everything.
+    const refreshToken = getRefreshToken()
+    if (refreshToken) {
+      void api.post('/auth/logout', { refreshToken }).catch(() => undefined)
+    }
+    clearTokens()
     setUser(null)
   }, [])
 
   const value = useMemo(
-    () => ({ user, ready, signIn, signUp, completeOnboarding, signOut, resetDemo }),
-    [user, ready, signIn, signUp, completeOnboarding, signOut, resetDemo],
+    () => ({ user, ready, signIn, signUp, completeOnboarding, signOut }),
+    [user, ready, signIn, signUp, completeOnboarding, signOut],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
