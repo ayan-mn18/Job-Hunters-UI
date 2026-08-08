@@ -15,6 +15,7 @@ export type KitDraft = {
   phone: string
   city: string
   noticePeriod: string
+  maxYearsExperience: number
   resumeName: string
 }
 
@@ -95,6 +96,11 @@ export type ScrapedJobStatus =
   | 'below_threshold'
   | 'deal_breaker'
   | 'approved'
+  | 'role_mismatch'
+  | 'seniority_mismatch'
+  | 'experience_mismatch'
+  | 'insufficient_skills'
+  | 'location_mismatch'
   | 'rejected'
   | 'queued'
   | 'tailored'
@@ -108,20 +114,33 @@ export type ScrapedJobDashboardItem = {
   id: string
   jobId: string
   title: string
+  candidateId: string | null
   company: string
-  locations: Array<{ raw?: string; city?: string; country?: string; countryCode?: string; isRemote?: boolean }>
+  locations: Array<{
+    raw?: string
+    city?: string
+    country?: string
+    countryCode?: string
+    isRemote?: boolean
+  }>
   remote: string
   sourcePortal: string
   status: ScrapedJobStatus
   candidateStatus: string | null
   score: number | null
-  reasons: string[]
   skills: string[]
-  descriptionPreview: string
+  salary: string | null
   jobUrl: string
-  applyUrl: string | null
   postedAt: string
   discoveredAt: string
+}
+
+export type ScrapedJobDetail = ScrapedJobDashboardItem & {
+  scoreBreakdown: unknown
+  reasons: string[]
+  description: string
+  applyUrl: string | null
+  postedAtPrecision: string
 }
 
 export type ScrapedJobsDashboard = {
@@ -131,6 +150,7 @@ export type ScrapedJobsDashboard = {
     jobsScraped: number
     jobsScored: number
     applicationsSubmitted: number
+    createdAt: string
     startedAt: string | null
     finishedAt: string | null
   } | null
@@ -138,6 +158,12 @@ export type ScrapedJobsDashboard = {
   portals: Record<string, number>
   items: ScrapedJobDashboardItem[]
   historical: boolean
+  pagination: {
+    page: number
+    pageSize: 20 | 50
+    total: number
+    totalPages: number
+  }
 }
 
 /* ----------------------------------------------------------- applications */
@@ -368,6 +394,7 @@ export type FullKit = {
   headline: string | null
   noticePeriod: string | null
   totalExperience: string | null
+  maxYearsExperience: number
   currentCtc: string | null
   expectedCtc: string | null
   workAuthorization: string | null
