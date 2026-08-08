@@ -147,10 +147,10 @@ export function Referrals() {
     setSyncNotice('')
     try {
       const { data } = await api.post<LinkedInReferralSyncResult>('/referrals/linkedin/sync', {
-        days: 7,
+        days: 90,
       })
       setSyncNotice(
-        `Checked ${data.inboxesScanned.join(' + ') || 'LinkedIn'}: found ${data.visibleConversations} conversations, opened ${data.scannedThreads}, read ${data.recentInboundMessages} incoming messages from the last 7 days, matched ${data.matchedMessages}, imported ${data.imported}, and skipped ${data.duplicates} duplicates.`,
+        `Checked ${data.inboxesScanned.join(' + ') || 'LinkedIn'}: found ${data.visibleConversations} conversations, opened ${data.scannedThreads}, read ${data.recentInboundMessages} incoming messages from the last ${data.lookbackDays} days, matched ${data.matchedMessages}, imported ${data.imported}, and skipped ${data.duplicates} duplicates.`,
       )
       const loadedDays = await loadDays()
       const first = loadedDays[0]?.date ?? null

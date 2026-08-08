@@ -225,10 +225,10 @@ export function Kit() {
     setLinkedinNotice('')
     try {
       const { data } = await api.post<LinkedInReferralSyncResult>('/referrals/linkedin/sync', {
-        days: 7,
+        days: 90,
       })
       setLinkedinNotice(
-        `Checked ${data.inboxesScanned.join(' + ') || 'LinkedIn'}: found ${data.visibleConversations} conversations, opened ${data.scannedThreads}, read ${data.recentInboundMessages} incoming messages from the last 7 days, matched ${data.matchedMessages}, and imported ${data.imported}.`,
+        `Checked ${data.inboxesScanned.join(' + ') || 'LinkedIn'}: found ${data.visibleConversations} conversations, opened ${data.scannedThreads}, read ${data.recentInboundMessages} incoming messages from the last ${data.lookbackDays} days, matched ${data.matchedMessages}, and imported ${data.imported}.`,
       )
       const { data: status } = await api.get<LinkedInReferralConnection>('/referrals/linkedin/status')
       setLinkedin(status)
