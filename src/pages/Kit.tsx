@@ -40,8 +40,12 @@ export function Referrals() {
   const loadList = useCallback(async (date: string | null) => {
     setLoading(true)
     try {
-      const params = new URLSearchParams({ limit: '100' })
+      const params = new URLSearchParams({ limit: '200' })
       if (date) params.set('date', date)
+      else {
+        params.set('days', '7')
+        params.set('source', 'linkedin')
+      }
       const { data } = await api.get<Referral[]>(`/referrals?${params}`)
       setList(data)
       setError('')
@@ -61,9 +65,8 @@ export function Referrals() {
       .then(([loadedDays, linkedinResponse]) => {
         if (cancelled) return
         setLinkedin(linkedinResponse.data)
-        const first = loadedDays[0]?.date ?? null
-        setSelectedDate(first)
-        return loadList(first)
+        setSelectedDate(null)
+        return loadList(null)
       })
       .catch((err) => {
         if (!cancelled) {
@@ -82,7 +85,19 @@ export function Referrals() {
     void loadList(date)
   }
 
-  const day = days.find((d) => d.date === selectedDate) ?? null
+  const sevenDayCutoff = Date.now() - 7 * 86_400_000
+  const recentDays = days.filter((item) =>
+    new Date(`${item.date}T23:59:59`).getTime() >= sevenDayCutoff
+  )
+  const recentSummary = {
+    total: recentDays.reduce((total, item) => total + item.linkedin, 0),
+    linkedin: recentDays.reduce((total, item) => total + item.linkedin, 0),
+    email: 0,
+    label: 'Last 7 days',
+  }
+  const day = selectedDate
+    ? (days.find((item) => item.date === selectedDate) ?? null)
+    : recentSummary
   const pending = list.filter((r) => !r.handled)
   const done = list.filter((r) => r.handled)
 
@@ -147,15 +162,14 @@ export function Referrals() {
     setSyncNotice('')
     try {
       const { data } = await api.post<LinkedInReferralSyncResult>('/referrals/linkedin/sync', {
-        days: 90,
+        days: 7,
       })
       setSyncNotice(
-        `Checked ${data.inboxesScanned.join(' + ') || 'LinkedIn'}: found ${data.visibleConversations} conversations, opened ${data.scannedThreads}, read ${data.recentInboundMessages} incoming messages from the last ${data.lookbackDays} days, matched ${data.matchedMessages}, imported ${data.imported}, and skipped ${data.duplicates} duplicates.`,
+        `Checked every ${data.inboxesScanned.join(' + ') || 'LinkedIn'} conversation: discovered ${data.visibleConversations}, opened ${data.scannedThreads}, scraped ${data.scannedMessages} messages, kept ${data.recentInboundMessages} incoming messages from the last 7 days, matched ${data.matchedMessages}, imported ${data.imported}, and skipped ${data.duplicates} duplicates.`,
       )
       const loadedDays = await loadDays()
-      const first = loadedDays[0]?.date ?? null
-      setSelectedDate(first)
-      await loadList(first)
+      setSelectedDate(null)
+      await loadList(null)
       const { data: status } = await api.get<LinkedInReferralConnection>('/referrals/linkedin/status')
       setLinkedin(status)
     } catch (err) {
@@ -171,11 +185,11 @@ export function Referrals() {
       <SectionTitle
         emoji="🤝"
         title="Referrals"
-        sub="LinkedIn referral requests, grouped by day"
+        sub="Eligible LinkedIn referral DMs from the last 7 days, newest first"
         action={
           linkedin?.connected ? (
             <Button size="sm" variant="blue" onClick={syncLinkedIn} disabled={syncingLinkedin}>
-              {syncingLinkedin ? 'Scanning LinkedIn…' : 'Scan last 7 days'}
+              {syncingLinkedin ? 'Scanning every DM…' : 'Scan every DM'}
             </Button>
           ) : undefined
         }
@@ -211,6 +225,21 @@ export function Referrals() {
           </p>
         ) : (
           <div className="flex gap-2.5 overflow-x-auto pb-1">
+            <button
+              onClick={() => {
+                setSelectedDate(null)
+                setOpenId(null)
+                void loadList(null)
+              }}
+              className={[
+                'toon-sm toon-lift min-w-32 shrink-0 rounded-2xl px-3.5 py-2.5 text-left',
+                selectedDate === null ? 'bg-butter-400' : 'bg-white',
+              ].join(' ')}
+            >
+              <div className="font-display text-sm font-bold">Last 7 days</div>
+              <div className="font-display text-2xl leading-none font-bold">{recentSummary.total}</div>
+              <div className="text-[11px] font-semibold text-ink-soft">eligible LinkedIn DMs</div>
+            </button>
             {days.map((d) => {
               const active = d.date === selectedDate
               return (

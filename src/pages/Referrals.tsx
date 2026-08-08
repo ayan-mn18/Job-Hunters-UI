@@ -225,10 +225,10 @@ export function Kit() {
     setLinkedinNotice('')
     try {
       const { data } = await api.post<LinkedInReferralSyncResult>('/referrals/linkedin/sync', {
-        days: 90,
+        days: 7,
       })
       setLinkedinNotice(
-        `Checked ${data.inboxesScanned.join(' + ') || 'LinkedIn'}: found ${data.visibleConversations} conversations, opened ${data.scannedThreads}, read ${data.recentInboundMessages} incoming messages from the last ${data.lookbackDays} days, matched ${data.matchedMessages}, and imported ${data.imported}.`,
+        `Checked every ${data.inboxesScanned.join(' + ') || 'LinkedIn'} conversation: discovered ${data.visibleConversations}, opened ${data.scannedThreads}, scraped ${data.scannedMessages} messages, kept ${data.recentInboundMessages} incoming messages from the last 7 days, matched ${data.matchedMessages}, and imported ${data.imported}.`,
       )
       const { data: status } = await api.get<LinkedInReferralConnection>('/referrals/linkedin/status')
       setLinkedin(status)
@@ -492,7 +492,7 @@ export function Kit() {
                 {linkedin?.connected ? (
                   <>
                     <Button size="sm" variant="blue" onClick={syncLinkedIn} disabled={linkedinBusy}>
-                      {linkedinBusy ? 'Scanning…' : 'Scan last 7 days now'}
+                      {linkedinBusy ? 'Scanning…' : 'Scan every DM'}
                     </Button>
                     <Button size="sm" variant="ghost" onClick={disconnectLinkedIn} disabled={linkedinBusy}>
                       Disconnect
