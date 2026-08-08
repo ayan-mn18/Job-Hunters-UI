@@ -1,9 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, NavLink, Outlet } from 'react-router-dom'
 import { useAuth } from '../auth/context'
-import { api } from '../lib/api'
-import type { DashboardHunter } from '../lib/types'
-import { Button, Chip } from './ui'
+import { Button } from './ui'
 
 const nav = [
   { to: '/app', emoji: '🏠', label: 'Den', end: true },
@@ -89,15 +87,6 @@ function UserMenu() {
 }
 
 export function Shell() {
-  const [hunter, setHunter] = useState<DashboardHunter | null>(null)
-
-  useEffect(() => {
-    api
-      .get<{ hunter: DashboardHunter }>('/dashboard')
-      .then(({ data }) => setHunter(data.hunter))
-      .catch(() => setHunter(null))
-  }, [])
-
   return (
     <div className="min-h-screen">
       {/* top bar */}
@@ -114,16 +103,6 @@ export function Shell() {
           </Link>
 
           <div className="ml-auto flex items-center gap-3">
-            {hunter && (
-              <>
-                <Chip tone="white" className="hidden sm:inline-flex">
-                  🔥 {hunter.streakDays} day streak
-                </Chip>
-                <Chip tone="ink">
-                  {hunter.appliedToday}/{hunter.dailyTarget} today
-                </Chip>
-              </>
-            )}
             <UserMenu />
           </div>
         </div>
