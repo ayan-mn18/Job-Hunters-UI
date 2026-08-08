@@ -6,7 +6,7 @@ import { Button } from './ui'
 const nav = [
   { to: '/app', emoji: '🏠', label: 'Den', end: true },
   { to: '/app/hunt', emoji: '🎯', label: 'The Hunt' },
-  { to: '/app/scraped', emoji: '', label: 'Scraped Jobs' },
+  { to: '/app/scraped', emoji: '🔎', label: 'Scraped Jobs' },
   { to: '/app/jobs', emoji: '📮', label: 'Applications' },
   { to: '/app/referrals', emoji: '🤝', label: 'Referrals' },
   { to: '/app/profile', emoji: '🧳', label: 'My Kit' },
