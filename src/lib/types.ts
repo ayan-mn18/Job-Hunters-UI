@@ -270,8 +270,13 @@ export type LinkedInReferralConnection = {
 }
 
 export type LinkedInReferralSyncResult = {
+  inboxesScanned: string[]
+  visibleConversations: number
   scannedThreads: number
   scannedMessages: number
+  datedMessages: number
+  recentMessages: number
+  recentInboundMessages: number
   matchedMessages: number
   imported: number
   duplicates: number
