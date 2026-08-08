@@ -28,6 +28,7 @@ type KitForm = {
   headline: string
   noticePeriod: string
   totalExperience: string
+  maxYearsExperience: string
   currentCtc: string
   expectedCtc: string
   workAuthorization: string
@@ -51,6 +52,7 @@ function toForm(kit: FullKit): KitForm {
     headline: kit.headline ?? '',
     noticePeriod: kit.noticePeriod ?? '',
     totalExperience: kit.totalExperience ?? '',
+    maxYearsExperience: String(kit.maxYearsExperience ?? 5),
     currentCtc: kit.currentCtc ?? '',
     expectedCtc: kit.expectedCtc ?? '',
     workAuthorization: kit.workAuthorization ?? '',
@@ -363,12 +365,21 @@ export function Kit() {
           <div>
             <SectionTitle emoji="📋" title="The awkward questions" sub="asked by almost every portal" />
             <Card className="space-y-4">
-              <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid gap-4 sm:grid-cols-3">
                 <Field label="Notice period">
                   <Input value={form.noticePeriod} onChange={set('noticePeriod')} placeholder="30 days" />
                 </Field>
                 <Field label="Total experience">
                   <Input value={form.totalExperience} onChange={set('totalExperience')} placeholder="4 years" />
+                </Field>
+                <Field label="Maximum required experience" hint="skip jobs asking for more">
+                  <Input
+                    type="number"
+                    min={0}
+                    max={50}
+                    value={form.maxYearsExperience}
+                    onChange={set('maxYearsExperience')}
+                  />
                 </Field>
               </div>
               <div className="grid gap-4 sm:grid-cols-2">

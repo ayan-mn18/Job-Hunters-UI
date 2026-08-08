@@ -28,6 +28,7 @@ export function Onboarding() {
     phone: '',
     city: '',
     noticePeriod: '30 days',
+    maxYearsExperience: 5,
     resumeName: '',
   })
 
@@ -509,13 +510,24 @@ function StepKit({
         </Field>
       </div>
 
-      <Field label="Notice period" hint="the question that ends every screening call">
-        <Input
-          value={draft.noticePeriod}
-          onChange={(e) => set('noticePeriod', e.target.value)}
-          placeholder="30 days"
-        />
-      </Field>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Notice period" hint="the question that ends every screening call">
+          <Input
+            value={draft.noticePeriod}
+            onChange={(e) => set('noticePeriod', e.target.value)}
+            placeholder="30 days"
+          />
+        </Field>
+        <Field label="Maximum required experience" hint="skip jobs asking for more">
+          <Input
+            type="number"
+            min={0}
+            max={50}
+            value={draft.maxYearsExperience}
+            onChange={(e) => set('maxYearsExperience', Number(e.target.value) || 0)}
+          />
+        </Field>
+      </div>
 
       <div className="toon-sm rounded-2xl bg-sky-soft p-3.5 text-sm font-semibold">
         🔒 The rest — address, CTC, work authorization — lives in <b>My Kit</b> inside the
