@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { Button, Card, Chip, Empty, SectionTitle, Stat } from '../components/ui'
 import { api } from '../lib/api'
-import type { Referral, ReferralDay } from '../lib/types'
+import type {
+  LinkedInReferralConnection,
+  LinkedInReferralSyncResult,
+  Referral,
+  ReferralDay,
+} from '../lib/types'
 
 function SourceChip({ source }: { source: Referral['source'] }) {
   return source === 'linkedin' ? (
@@ -21,6 +27,9 @@ export function Referrals() {
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [rewritingId, setRewritingId] = useState<string | null>(null)
   const [sendingAll, setSendingAll] = useState(false)
+  const [linkedin, setLinkedin] = useState<LinkedInReferralConnection | null>(null)
+  const [syncingLinkedin, setSyncingLinkedin] = useState(false)
+  const [syncNotice, setSyncNotice] = useState('')
 
   const loadDays = useCallback(async () => {
     const { data } = await api.get<ReferralDay[]>('/referrals/days?limit=14')
@@ -45,10 +54,14 @@ export function Referrals() {
 
   useEffect(() => {
     let cancelled = false
-    loadDays()
-      .then((data) => {
+    Promise.all([
+      loadDays(),
+      api.get<LinkedInReferralConnection>('/referrals/linkedin/status'),
+    ])
+      .then(([loadedDays, linkedinResponse]) => {
         if (cancelled) return
-        const first = data[0]?.date ?? null
+        setLinkedin(linkedinResponse.data)
+        const first = loadedDays[0]?.date ?? null
         setSelectedDate(first)
         return loadList(first)
       })
@@ -128,14 +141,61 @@ export function Referrals() {
       setSendingAll(false)
     }
   }
+  async function syncLinkedIn() {
+    setSyncingLinkedin(true)
+    setError('')
+    setSyncNotice('')
+    try {
+      const { data } = await api.post<LinkedInReferralSyncResult>('/referrals/linkedin/sync', {
+        days: 7,
+      })
+      setSyncNotice(
+        `Scanned ${data.scannedMessages} messages. Imported ${data.imported}; skipped ${data.duplicates} already seen.`,
+      )
+      const loadedDays = await loadDays()
+      const first = loadedDays[0]?.date ?? null
+      setSelectedDate(first)
+      await loadList(first)
+      const { data: status } = await api.get<LinkedInReferralConnection>('/referrals/linkedin/status')
+      setLinkedin(status)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not sync LinkedIn referrals.')
+    } finally {
+      setSyncingLinkedin(false)
+    }
+  }
+
 
   return (
     <div className="space-y-6">
       <SectionTitle
         emoji="🤝"
         title="Referrals"
-        sub="Every DM and email asking for a referral, gathered in one pile"
+        sub="LinkedIn referral requests, grouped by day"
+        action={
+          linkedin?.connected ? (
+            <Button size="sm" variant="blue" onClick={syncLinkedIn} disabled={syncingLinkedin}>
+              {syncingLinkedin ? 'Scanning LinkedIn…' : 'Scan last 7 days'}
+            </Button>
+          ) : undefined
+        }
       />
+      {linkedin && !linkedin.connected && (
+        <Card className="flex flex-wrap items-center gap-3 bg-sky-soft/35! py-3!">
+          <div className="min-w-52 flex-1">
+            <p className="font-display text-sm font-bold">Connect LinkedIn in My Kit</p>
+            <p className="text-xs text-ink-soft">Then Hunty can check referral DMs every 24 hours.</p>
+          </div>
+          <Link to="/app/profile">
+            <Button size="sm" variant="ghost">Open My Kit</Button>
+          </Link>
+        </Card>
+      )}
+      {syncNotice && (
+        <Card className="bg-mint/15! py-3!">
+          <p className="text-sm font-semibold">{syncNotice}</p>
+        </Card>
+      )}
 
       {error && (
         <Card className="bg-coral/15!">

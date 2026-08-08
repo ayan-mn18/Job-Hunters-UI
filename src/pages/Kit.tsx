@@ -2,7 +2,14 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useAuth } from '../auth/context'
 import { Button, Card, Chip, Empty, Field, Input, SectionTitle } from '../components/ui'
 import { api } from '../lib/api'
-import type { Employment, FullKit, Resume, ResumeAutofillResult } from '../lib/types'
+import type {
+  Employment,
+  FullKit,
+  LinkedInReferralConnection,
+  LinkedInReferralSyncResult,
+  Resume,
+  ResumeAutofillResult,
+} from '../lib/types'
 
 /**
  * "My Kit" — the bag of answers Hunty carries to every application form.
@@ -74,16 +81,24 @@ export function Kit() {
   const [showAddRole, setShowAddRole] = useState(false)
   const [photoBusy, setPhotoBusy] = useState(false)
   const photoInput = useRef<HTMLInputElement>(null)
+  const [linkedin, setLinkedin] = useState<LinkedInReferralConnection | null>(null)
+  const [linkedinProfileUrl, setLinkedinProfileUrl] = useState('')
+  const [linkedinBusy, setLinkedinBusy] = useState(false)
+  const [linkedinNotice, setLinkedinNotice] = useState('')
 
   useEffect(() => {
     let cancelled = false
-    api
-      .get<FullKit>('/me/kit')
-      .then(({ data }) => {
+    Promise.all([
+      api.get<FullKit>('/me/kit'),
+      api.get<LinkedInReferralConnection>('/referrals/linkedin/status'),
+    ])
+      .then(([kitResponse, linkedinResponse]) => {
         if (cancelled) return
-        setKit(data)
-        setForm(toForm(data))
-        setSkills(data.skills)
+        setKit(kitResponse.data)
+        setForm(toForm(kitResponse.data))
+        setSkills(kitResponse.data.skills)
+        setLinkedin(linkedinResponse.data)
+        setLinkedinProfileUrl(linkedinResponse.data.profileUrl ?? kitResponse.data.linkedinUrl ?? '')
       })
       .catch((err) => {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load the kit.')
@@ -92,6 +107,20 @@ export function Kit() {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    if (!linkedin || !['provisioning', 'pending_verification'].includes(linkedin.status)) return
+    const interval = window.setInterval(() => {
+      api
+        .get<LinkedInReferralConnection>('/referrals/linkedin/status')
+        .then(({ data }) => {
+          setLinkedin(data)
+          if (data.connected) setLinkedinNotice('LinkedIn connected. Initial seven-day sync started.')
+        })
+        .catch(() => undefined)
+    }, 3_000)
+    return () => window.clearInterval(interval)
+  }, [linkedin])
 
   const set = (key: keyof KitForm) => (e: { target: { value: string } }) =>
     setForm((f) => (f ? { ...f, [key]: e.target.value } : f))
@@ -168,6 +197,71 @@ export function Kit() {
       setPhotoBusy(false)
     }
   }
+  async function connectLinkedIn() {
+    const profileUrl = linkedinProfileUrl.trim() || form?.linkedinUrl.trim()
+    if (!profileUrl) {
+      setError('Add your LinkedIn profile URL first.')
+      return
+    }
+    setLinkedinBusy(true)
+    setError('')
+    setLinkedinNotice('')
+    try {
+      const { data } = await api.post<LinkedInReferralConnection>('/referrals/linkedin/connect', {
+        profileUrl,
+      })
+      setLinkedin(data)
+      setLinkedinNotice('LinkedIn window opened. Sign in there; Hunty stores only an encrypted session.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not start LinkedIn connection.')
+    } finally {
+      setLinkedinBusy(false)
+    }
+  }
+
+  async function syncLinkedIn() {
+    setLinkedinBusy(true)
+    setError('')
+    setLinkedinNotice('')
+    try {
+      const { data } = await api.post<LinkedInReferralSyncResult>('/referrals/linkedin/sync', {
+        days: 7,
+      })
+      setLinkedinNotice(
+        `Scanned ${data.scannedMessages} messages across ${data.scannedThreads} conversations. Imported ${data.imported} referral request${data.imported === 1 ? '' : 's'}.`,
+      )
+      const { data: status } = await api.get<LinkedInReferralConnection>('/referrals/linkedin/status')
+      setLinkedin(status)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not sync LinkedIn referrals.')
+    } finally {
+      setLinkedinBusy(false)
+    }
+  }
+
+  async function disconnectLinkedIn() {
+    setLinkedinBusy(true)
+    setError('')
+    try {
+      await api.delete('/referrals/linkedin/connection')
+      setLinkedin({
+        connected: false,
+        status: 'absent',
+        profileUrl: null,
+        actionRequired: null,
+        lastVerifiedAt: null,
+        lastSyncedAt: null,
+        syncing: false,
+        schedule: 'Every 24 hours',
+      })
+      setLinkedinNotice('LinkedIn disconnected and stored session removed.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not disconnect LinkedIn.')
+    } finally {
+      setLinkedinBusy(false)
+    }
+  }
+
 
 
   function addSkill() {
@@ -359,6 +453,60 @@ export function Kit() {
               <Field label="Portfolio">
                 <Input value={form.portfolioUrl} onChange={set('portfolioUrl')} placeholder="yoursite.com" />
               </Field>
+            </Card>
+            <Card className="space-y-3 bg-sky-soft/35!">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-lg">LinkedIn referral inbox</h3>
+                  <p className="mt-1 text-sm font-semibold text-ink-soft">
+                    Free browser sync. Hunty checks new DMs every 24 hours.
+                  </p>
+                </div>
+                <Chip tone={linkedin?.connected ? 'mint' : linkedin?.status === 'failed' ? 'coral' : 'white'}>
+                  {linkedin?.connected ? 'Connected' : linkedin?.status === 'provisioning' ? 'Sign-in open' : 'Not connected'}
+                </Chip>
+              </div>
+
+              <Field label="LinkedIn profile URL" hint="Used to label this connection">
+                <Input
+                  value={linkedinProfileUrl}
+                  onChange={(event) => setLinkedinProfileUrl(event.target.value)}
+                  placeholder="linkedin.com/in/you"
+                  disabled={linkedin?.connected}
+                />
+              </Field>
+
+              {linkedin?.actionRequired && (
+                <p className="rounded-xl bg-butter-200 px-3 py-2 text-xs font-semibold">
+                  {linkedin.actionRequired}
+                </p>
+              )}
+              {linkedinNotice && <p className="text-xs font-semibold text-moss">{linkedinNotice}</p>}
+              {linkedin?.lastSyncedAt && (
+                <p className="text-xs font-semibold text-ink-soft">
+                  Last synced {new Date(linkedin.lastSyncedAt).toLocaleString()} · {linkedin.schedule}
+                </p>
+              )}
+
+              <div className="flex flex-wrap gap-2">
+                {linkedin?.connected ? (
+                  <>
+                    <Button size="sm" variant="blue" onClick={syncLinkedIn} disabled={linkedinBusy}>
+                      {linkedinBusy ? 'Scanning…' : 'Scan last 7 days now'}
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={disconnectLinkedIn} disabled={linkedinBusy}>
+                      Disconnect
+                    </Button>
+                  </>
+                ) : (
+                  <Button size="sm" variant="blue" onClick={connectLinkedIn} disabled={linkedinBusy}>
+                    {linkedinBusy ? 'Opening LinkedIn…' : 'Connect LinkedIn'}
+                  </Button>
+                )}
+              </div>
+              <p className="text-[11px] leading-relaxed text-ink-soft">
+                LinkedIn does not offer free inbox-reading API access. This uses your own signed-in browser session. Password never enters Huntly. LinkedIn may request verification or restrict automation.
+              </p>
             </Card>
           </div>
 

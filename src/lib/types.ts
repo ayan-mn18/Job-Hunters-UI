@@ -258,6 +258,27 @@ export type ReferralDay = {
   total: number
   pending: number
 }
+export type LinkedInReferralConnection = {
+  connected: boolean
+  status: 'absent' | 'provisioning' | 'pending_verification' | 'ready' | 'blocked' | 'failed'
+  profileUrl: string | null
+  actionRequired: string | null
+  lastVerifiedAt: string | null
+  lastSyncedAt: string | null
+  syncing: boolean
+  schedule: string
+}
+
+export type LinkedInReferralSyncResult = {
+  scannedThreads: number
+  scannedMessages: number
+  matchedMessages: number
+  imported: number
+  duplicates: number
+  lookbackDays: number
+  syncedAt: string
+}
+
 
 /* ------------------------------------------------------------------ hunt */
 
