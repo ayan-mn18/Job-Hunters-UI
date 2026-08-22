@@ -5,7 +5,7 @@
       "name": "job-hunters-ui",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
-      "port": 5173
+      "port": 46461
     }
   ]
 }
