@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Button, Card, Chip, Input, SectionTitle } from '../components/ui'
+import { Button, Card, Chip, Dialog, Fact, Input, ScoreBar, SectionTitle } from '../components/ui'
 import { api } from '../lib/api'
 import { JOB_STATUS_META, JOB_STATUS_ORDER } from '../lib/jobStatus'
 import type {
   HuntRun,
+  ScoreBreakdown,
   ScrapedJobDashboardItem,
   ScrapedJobDetail,
   ScrapedJobsDashboard,
@@ -13,6 +14,38 @@ import type {
 const SELECT_CLASS =
   'toon-sm w-full rounded-2xl bg-white px-3.5 py-2.5 font-sans text-sm font-semibold focus:outline-none'
 
+const EMPLOYMENT_LABELS: Record<string, string> = {
+  full_time: 'Full time',
+  part_time: 'Part time',
+  contract: 'Contract',
+  internship: 'Internship',
+  temporary: 'Temporary',
+  unknown: 'Not stated',
+}
+
+/** Component weights the API scores against, used to size the breakdown bars. */
+const SCORE_MAX: ScoreBreakdown = {
+  coverage: 45,
+  stack: 20,
+  location: 15,
+  experience: 12,
+  seniority: 8,
+}
+
+const SCORE_LABELS: Record<keyof ScoreBreakdown, string> = {
+  coverage: 'Skills they ask for that you have',
+  stack: 'Built on your stack',
+  location: 'Location',
+  experience: 'Experience',
+  seniority: 'Seniority',
+}
+
+function locationOf(job: { locations: Array<{ raw?: string }>; remote: string }): string {
+  const listed = job.locations.map((item) => item.raw).filter(Boolean).join('; ')
+  if (listed) return listed
+  return job.remote === 'unknown' ? 'Not listed' : job.remote
+}
+
 export function ScrapedJobs() {
   const [dashboard, setDashboard] = useState<ScrapedJobsDashboard | null>(null)
   const [runs, setRuns] = useState<HuntRun[]>([])
@@ -21,7 +54,11 @@ export function ScrapedJobs() {
   const [portal, setPortal] = useState('all')
   const [searchInput, setSearchInput] = useState('')
   const [query, setQuery] = useState('')
-  const [minScore, setMinScore] = useState('')
+  // The dashboard opens on strong matches only. Everything scraped is still
+  // stored and reachable by clearing the filter; the default is what is worth
+  // reading.
+  const [minScore, setMinScore] = useState('75')
+  const [maxExperience, setMaxExperience] = useState('')
   const [remote, setRemote] = useState('all')
   const [foundOn, setFoundOn] = useState('')
   const [postedOn, setPostedOn] = useState('')
@@ -36,6 +73,7 @@ export function ScrapedJobs() {
   const [detail, setDetail] = useState<ScrapedJobDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [detailError, setDetailError] = useState('')
+  const [showFullJd, setShowFullJd] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -71,6 +109,7 @@ export function ScrapedJobs() {
     if (portal !== 'all') params.set('portal', portal)
     if (query) params.set('query', query)
     if (minScore) params.set('minScore', minScore)
+    if (maxExperience) params.set('maxExperience', maxExperience)
     if (remote !== 'all') params.set('remote', remote)
     if (foundOn) params.set('foundOn', foundOn)
     if (postedOn) params.set('postedOn', postedOn)
@@ -93,16 +132,7 @@ export function ScrapedJobs() {
     return () => {
       cancelled = true
     }
-  }, [foundOn, minScore, page, pageSize, portal, postedOn, query, reloadKey, remote, selectedRunId, status])
-
-  useEffect(() => {
-    if (!modalOpen) return
-    function closeOnEscape(event: KeyboardEvent) {
-      if (event.key === 'Escape') setModalOpen(false)
-    }
-    document.addEventListener('keydown', closeOnEscape)
-    return () => document.removeEventListener('keydown', closeOnEscape)
-  }, [modalOpen])
+  }, [foundOn, maxExperience, minScore, page, pageSize, portal, postedOn, query, reloadKey, remote, selectedRunId, status])
 
   function resetFilters() {
     setStatus('all')
@@ -110,6 +140,7 @@ export function ScrapedJobs() {
     setSearchInput('')
     setQuery('')
     setMinScore('')
+    setMaxExperience('')
     setRemote('all')
     setFoundOn('')
     setPostedOn('')
@@ -122,6 +153,7 @@ export function ScrapedJobs() {
     setModalOpen(true)
     setDetail(null)
     setDetailError('')
+    setShowFullJd(false)
     setDetailLoading(true)
     try {
       const { data } = await api.get<ScrapedJobDetail>(
@@ -265,23 +297,38 @@ export function ScrapedJobs() {
               }}
               className={SELECT_CLASS}
             >
-              <option value="">Any score</option>
-              <option value="50">50% and up</option>
-              <option value="60">60% and up</option>
-              <option value="70">70% and up</option>
+              <option value="75">75% and up</option>
               <option value="80">80% and up</option>
               <option value="90">90% and up</option>
+              <option value="100">100% only</option>
+              <option value="">Any score (includes weak matches)</option>
             </select>
           </label>
         </div>
 
-        <div className="grid gap-3 md:grid-cols-[1fr_180px_200px_auto]">
+        <div className="grid gap-3 md:grid-cols-[1fr_180px_180px_200px_auto]">
           <Input
             aria-label="Search jobs"
             value={searchInput}
             onChange={(event) => setSearchInput(event.target.value)}
             placeholder="Search role, company, or skill"
           />
+          <select
+            aria-label="Maximum experience asked for"
+            value={maxExperience}
+            onChange={(event) => {
+              setMaxExperience(event.target.value)
+              setPage(1)
+            }}
+            className={SELECT_CLASS}
+          >
+            <option value="">Any experience</option>
+            <option value="0">No experience needed</option>
+            <option value="2">Asks 2 years or less</option>
+            <option value="3">Asks 3 years or less</option>
+            <option value="5">Asks 5 years or less</option>
+            <option value="8">Asks 8 years or less</option>
+          </select>
           <select
             aria-label="Remote type"
             value={remote}
@@ -378,9 +425,7 @@ export function ScrapedJobs() {
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {dashboard?.items.map((job) => {
               const meta = JOB_STATUS_META[job.status]
-              const location =
-                job.locations.map((item) => item.raw).filter(Boolean).join('; ') ||
-                (job.remote === 'unknown' ? 'Location not listed' : job.remote)
+              const location = locationOf(job)
               const selectable = canApprove && job.status === 'eligible' && Boolean(job.candidateId)
               const checked = job.candidateId ? selected.includes(job.candidateId) : false
               return (
@@ -421,8 +466,14 @@ export function ScrapedJobs() {
                     )}
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-1.5">
-                        {job.score !== null && (
-                          <Chip tone={job.score >= 80 ? 'mint' : 'yellow'}>{job.score}% match</Chip>
+                        {/* Always rendered: a missing chip used to look like a
+                            bug, when the score simply had not been stored. */}
+                        {job.score === null ? (
+                          <Chip tone="white">Not scored</Chip>
+                        ) : (
+                          <Chip tone={job.score >= 80 ? 'mint' : job.score >= 60 ? 'yellow' : 'white'}>
+                            {job.score}% match
+                          </Chip>
                         )}
                         <Chip tone={meta.tone}>{meta.label}</Chip>
                       </div>
@@ -432,7 +483,11 @@ export function ScrapedJobs() {
                   </div>
                   <div className="mt-3 space-y-1 text-xs font-semibold text-ink-soft">
                     <p className="truncate">{location} · {job.remote}</p>
-                    {job.salary && <p className="text-ink">Pay: {job.salary}</p>}
+                    <p className="flex flex-wrap gap-x-3">
+                      {job.experience && <span className="text-ink">{job.experience}</span>}
+                      {job.salary && <span className="text-ink">{job.salary}</span>}
+                      {!job.experience && !job.salary && <span>Experience and pay not stated</span>}
+                    </p>
                   </div>
                   <div className="mt-3 flex flex-wrap gap-1">
                     {job.skills.slice(0, 4).map((skill) => (
@@ -499,85 +554,159 @@ export function ScrapedJobs() {
         </div>
       )}
 
-      {modalOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-ink/55 p-4"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setModalOpen(false)
-          }}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label="Job details"
-            className="toon max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-blob bg-white p-5 sm:p-7"
-          >
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-xs font-bold tracking-wide text-ink-soft uppercase">Job details</p>
-                <h2 className="mt-1 text-2xl">{detail?.title ?? 'Loading job…'}</h2>
-                {detail && <p className="font-semibold text-ink-soft">{detail.company}</p>}
+      <Dialog
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        eyebrow="Job details"
+        title={detail?.title ?? 'Loading job…'}
+        subtitle={detail?.company}
+        footer={
+          detail ? (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span className="text-xs font-semibold text-ink-soft">
+                {detail.sourcePortal} · found {new Date(detail.discoveredAt).toLocaleDateString()}
+              </span>
+              <div className="flex flex-wrap gap-2">
+                {detail.applyUrl && detail.applyUrl !== detail.jobUrl && (
+                  <a href={detail.jobUrl} target="_blank" rel="noreferrer">
+                    <Button size="sm" variant="ghost">View source ↗</Button>
+                  </a>
+                )}
+                <a href={detail.applyUrl ?? detail.jobUrl} target="_blank" rel="noreferrer">
+                  <Button size="sm" variant="blue">Open application ↗</Button>
+                </a>
               </div>
-              <Button size="sm" variant="ghost" onClick={() => setModalOpen(false)}>
-                Close
-              </Button>
+            </div>
+          ) : undefined
+        }
+      >
+        {detailLoading ? (
+          // Skeleton shaped like the real thing, so the layout does not jump
+          // when the data lands.
+          <div className="space-y-5">
+            <div className="flex gap-2">
+              {[0, 1, 2].map((index) => (
+                <div key={index} className="h-6 w-24 animate-pulse rounded-full bg-butter-200" />
+              ))}
+            </div>
+            <div className="h-28 animate-pulse rounded-2xl bg-butter-100" />
+            <div className="h-20 animate-pulse rounded-2xl bg-butter-100" />
+            <div className="h-40 animate-pulse rounded-2xl bg-butter-100" />
+          </div>
+        ) : detailError ? (
+          <p className="rounded-2xl bg-coral/15 p-4 font-semibold">{detailError}</p>
+        ) : detail ? (
+          <div className="space-y-6">
+            <div className="flex flex-wrap gap-2">
+              {detail.score === null ? (
+                <Chip tone="white">Not scored</Chip>
+              ) : (
+                <Chip tone={detail.score >= 80 ? 'mint' : detail.score >= 60 ? 'yellow' : 'white'}>
+                  {detail.score}% match
+                </Chip>
+              )}
+              <Chip tone={JOB_STATUS_META[detail.status].tone}>
+                {JOB_STATUS_META[detail.status].label}
+              </Chip>
+              <Chip tone="white">{detail.remote}</Chip>
+              <Chip tone="white">{EMPLOYMENT_LABELS[detail.employmentType] ?? detail.employmentType}</Chip>
+              {detail.salary && <Chip tone="yellow">{detail.salary}</Chip>}
             </div>
 
-            {detailLoading ? (
-              <div className="py-16 text-center font-semibold text-ink-soft">Loading full details…</div>
-            ) : detailError ? (
-              <p className="my-8 rounded-2xl bg-coral/15 p-4 font-semibold">{detailError}</p>
-            ) : detail ? (
-              <div className="mt-5 space-y-5">
-                <div className="flex flex-wrap gap-2">
-                  {detail.score !== null && <Chip tone="mint">{detail.score}% match</Chip>}
-                  <Chip tone={JOB_STATUS_META[detail.status].tone}>{JOB_STATUS_META[detail.status].label}</Chip>
-                  <Chip tone="white">{detail.sourcePortal}</Chip>
-                  <Chip tone="white">{detail.remote}</Chip>
-                  {detail.salary && <Chip tone="yellow">{detail.salary}</Chip>}
-                </div>
-                <div className="grid gap-3 rounded-2xl bg-butter-100 p-4 text-sm sm:grid-cols-2">
-                  <p><b>Posted:</b> {new Date(detail.postedAt).toLocaleString()}</p>
-                  <p><b>Found:</b> {new Date(detail.discoveredAt).toLocaleString()}</p>
-                  <p className="sm:col-span-2"><b>Location:</b> {detail.locations.map((item) => item.raw).filter(Boolean).join('; ') || 'Not listed'}</p>
-                </div>
-                {detail.reasons.length > 0 && (
-                  <section>
-                    <h3 className="text-lg">Match notes</h3>
-                    <ul className="mt-2 space-y-1 text-sm font-semibold text-ink-soft">
-                      {detail.reasons.map((reason) => <li key={reason}>— {reason}</li>)}
-                    </ul>
-                  </section>
+            <section className="grid gap-4 rounded-2xl border-[3px] border-ink bg-butter-100 p-4 sm:grid-cols-3">
+              <Fact label="Location">{locationOf(detail)}</Fact>
+              <Fact label="Experience">
+                {detail.experience ?? 'Not stated'}
+                {detail.experienceText && (
+                  <span className="mt-0.5 block text-xs font-normal text-ink-soft">
+                    “{detail.experienceText}”
+                  </span>
                 )}
-                {detail.skills.length > 0 && (
-                  <section>
-                    <h3 className="text-lg">Skills</h3>
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {detail.skills.map((skill) => <Chip key={skill} tone="white">{skill}</Chip>)}
-                    </div>
-                  </section>
-                )}
-                <section>
-                  <h3 className="text-lg">Description</h3>
-                  <div className="mt-2 max-h-80 overflow-y-auto whitespace-pre-wrap rounded-2xl border-2 border-ink bg-butter-50 p-4 text-sm leading-relaxed">
-                    {detail.description || 'No description was provided by the source.'}
-                  </div>
-                </section>
-                <div className="flex flex-wrap gap-2">
-                  <a href={detail.applyUrl ?? detail.jobUrl} target="_blank" rel="noreferrer">
-                    <Button variant="blue">Open application</Button>
-                  </a>
-                  {detail.applyUrl && detail.applyUrl !== detail.jobUrl && (
-                    <a href={detail.jobUrl} target="_blank" rel="noreferrer">
-                      <Button variant="ghost">View source</Button>
-                    </a>
-                  )}
+              </Fact>
+              <Fact label="Salary">{detail.salary ?? 'Not stated'}</Fact>
+              <Fact label="Workplace">{detail.remote}</Fact>
+              <Fact label="Posted">{new Date(detail.postedAt).toLocaleDateString()}</Fact>
+              <Fact label="Found">{new Date(detail.discoveredAt).toLocaleDateString()}</Fact>
+            </section>
+
+            {detail.scoreBreakdown && (
+              <section>
+                <h3 className="text-lg">Why this score</h3>
+                <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                  {(Object.keys(SCORE_MAX) as Array<keyof ScoreBreakdown>).map((key) => (
+                    <ScoreBar
+                      key={key}
+                      label={SCORE_LABELS[key]}
+                      value={detail.scoreBreakdown?.[key] ?? 0}
+                      max={SCORE_MAX[key]}
+                    />
+                  ))}
                 </div>
+              </section>
+            )}
+
+            {detail.responsibilities.length > 0 && (
+              <section>
+                <h3 className="text-lg">What you would be doing</h3>
+                <ul className="mt-2 space-y-1.5 text-sm">
+                  {detail.responsibilities.map((line) => (
+                    <li key={line} className="flex gap-2">
+                      <span aria-hidden="true">•</span>
+                      <span>{line}</span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            {detail.skills.length > 0 && (
+              <section>
+                <h3 className="text-lg">Skills</h3>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {detail.skills.map((skill) => (
+                    <Chip key={skill} tone="white">{skill}</Chip>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {detail.reasons.length > 0 && (
+              <section>
+                <h3 className="text-lg">Match notes</h3>
+                <ul className="mt-2 space-y-1 text-sm font-semibold text-ink-soft">
+                  {detail.reasons.map((reason) => (
+                    <li key={reason}>— {reason}</li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            <section>
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-lg">Full description</h3>
+                {detail.description.length > 900 && (
+                  <Button size="sm" variant="ghost" onClick={() => setShowFullJd((value) => !value)}>
+                    {showFullJd ? 'Show less' : 'Show full description'}
+                  </Button>
+                )}
               </div>
-            ) : null}
+              {detail.description ? (
+                // No inner scroll box: the dialog body is the only scroller, so
+                // a long description reads like a page instead of a letterbox.
+                <div className="mt-2 text-sm leading-relaxed whitespace-pre-wrap">
+                  {showFullJd || detail.description.length <= 900
+                    ? detail.description
+                    : `${detail.description.slice(0, 900).trimEnd()}…`}
+                </div>
+              ) : (
+                <p className="mt-2 text-sm text-ink-soft">
+                  This source did not publish a description.
+                </p>
+              )}
+            </section>
           </div>
-        </div>
-      )}
+        ) : null}
+      </Dialog>
     </div>
   )
 }

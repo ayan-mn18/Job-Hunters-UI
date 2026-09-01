@@ -5,7 +5,7 @@ import { Button, Card, Chip } from '../components/ui'
 const steps = [
   { emoji: '📄', title: 'Drop your resume', body: 'Hunty reads it once and remembers every skill, title and year.' },
   { emoji: '🎯', title: 'Say what you want', body: 'Roles, companies, locations, salary floor, and your deal breakers.' },
-  { emoji: '🔎', title: 'Hunty scrapes daily', body: 'Eight portals swept every morning while you are still asleep.' },
+  { emoji: '🔎', title: 'Hunty searches daily', body: 'Your roles and locations, searched across every source, every morning.' },
   { emoji: '✂️', title: 'Resume gets tailored', body: 'One variant per job description. Never the same PDF twice.' },
   { emoji: '📮', title: 'Applications go out', body: 'Forms filled from your kit. Up to a hundred a day.' },
 ]
@@ -31,7 +31,22 @@ const features = [
   },
 ]
 
-const portals = ['💼 LinkedIn', '🚀 Wellfound', '🌍 RemoteOK', '🏝️ We Work Remotely', '🧡 YC', '🇮🇳 Naukri', '⚡ Instahyre', '🔎 Indeed']
+// Only sources the engine actually searches. LinkedIn, Naukri and Indeed
+// listings arrive through Google for Jobs rather than from those sites
+// directly, which is why the strip names the route and not the brand — a
+// portal advertised here that discovery never queries is the fastest way to
+// lose someone's trust.
+const portals = [
+  '🔍 Google for Jobs',
+  '📊 Adzuna',
+  '🌍 Jooble',
+  '🏢 Greenhouse',
+  '🧩 Ashby',
+  '🛠️ Lever',
+  '🌍 RemoteOK',
+  '🏝️ We Work Remotely',
+  '⚡ Instahyre',
+]
 
 export function Landing() {
   return (
@@ -69,9 +84,9 @@ export function Landing() {
               to them.
             </h1>
             <p className="mt-5 max-w-lg text-lg font-semibold text-ink-soft">
-              Give it your resume and what you actually want. It scrapes eight job
-              portals every morning, rewrites your resume for each posting, and applies
-              — up to a hundred a day.
+              Give it your resume and what you actually want. Every morning it searches
+              for the roles you asked for, rewrites your resume for each posting, and
+              applies — up to a hundred a day.
             </p>
 
             <div className="mt-7 flex flex-wrap gap-3">

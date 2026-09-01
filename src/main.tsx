@@ -12,6 +12,8 @@ import { Den } from './pages/Den'
 import { Hunt } from './pages/Hunt'
 import { Applications } from './pages/Applications'
 import { ScrapedJobs } from './pages/ScrapedJobs'
+import { Notifications } from './pages/Notifications'
+import { Outreach } from './pages/Outreach'
 import { Referrals } from './pages/Referrals'
 import { Kit } from './pages/Kit'
 
@@ -56,6 +58,8 @@ const router = createBrowserRouter([
           { path: 'scraped', element: <ScrapedJobs /> },
           { path: 'jobs', element: <Applications /> },
           { path: 'referrals', element: <Referrals /> },
+      { path: 'inbox', element: <Notifications /> },
+      { path: 'outreach', element: <Outreach /> },
           { path: 'profile', element: <Kit /> },
         ],
       },

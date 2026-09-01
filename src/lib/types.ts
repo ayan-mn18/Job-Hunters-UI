@@ -124,21 +124,38 @@ export type ScrapedJobDashboardItem = {
     isRemote?: boolean
   }>
   remote: string
+  employmentType: string
   sourcePortal: string
   status: ScrapedJobStatus
   candidateStatus: string | null
   score: number | null
   skills: string[]
   salary: string | null
+  /** Pre-formatted, e.g. "3–5 years" or "4+ years". */
+  experience: string | null
+  experienceMin: number | null
+  experienceMax: number | null
+  responsibilities: string[]
   jobUrl: string
   postedAt: string
   discoveredAt: string
 }
 
+export type ScoreBreakdown = {
+  /** Share of the posting's required skills the candidate already has. */
+  coverage: number
+  stack: number
+  experience: number
+  seniority: number
+  location: number
+}
+
 export type ScrapedJobDetail = ScrapedJobDashboardItem & {
-  scoreBreakdown: unknown
+  scoreBreakdown: ScoreBreakdown | null
   reasons: string[]
   description: string
+  descriptionHtml: string | null
+  experienceText: string | null
   applyUrl: string | null
   postedAtPrecision: string
 }
@@ -274,14 +291,40 @@ export type LinkedInReferralSyncResult = {
   visibleConversations: number
   scannedThreads: number
   scannedMessages: number
+  recentInboundMessages: number
   datedMessages: number
   recentMessages: number
-  recentInboundMessages: number
   matchedMessages: number
   imported: number
   duplicates: number
   lookbackDays: number
   syncedAt: string
+}
+
+export type LinkedInDmMessage = {
+  id: string
+  conversationId: string
+  conversationTitle: string
+  threadUrl: string
+  body: string
+  senderName: string
+  senderProfileUrl: string | null
+  sentAt: string
+  date: string
+  time: string
+  relativeTime: string
+  outbound: boolean
+  links: Array<{ href: string; text: string; download: string | null }>
+}
+
+export type LinkedInDmMeta = {
+  total: number
+  inbound: number
+  outbound: number
+  filteredTotal: number
+  dates: string[]
+  limit: number
+  offset: number
 }
 
 
@@ -345,7 +388,8 @@ export type HuntStatus = {
   awaitingApproval: boolean
   dailyTarget: number
   currentRun: HuntRun | null
-  candidates: HuntCandidate[]
+  /** Candidate rows are fetched separately, so polling stays cheap. */
+  candidateCount: number
   queueStubbed: boolean
 }
 

@@ -1,4 +1,5 @@
-import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode } from 'react'
+import { useEffect, useId, useRef, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 
 function cx(...parts: (string | false | null | undefined)[]) {
   return parts.filter(Boolean).join(' ')
@@ -116,13 +117,16 @@ export function Chip({
   tone = 'yellow',
   children,
   className,
+  title,
 }: {
   tone?: ChipTone
   children: ReactNode
   className?: string
+  title?: string
 }) {
   return (
     <span
+      title={title}
       className={cx(
         'inline-flex items-center gap-1 rounded-full border-[2.5px] border-ink px-2.5 py-0.5',
         'font-display text-xs font-semibold whitespace-nowrap',
@@ -248,6 +252,187 @@ export function Toggle({
         )}
       />
     </button>
+  )
+}
+
+/* ------------------------------------------------------------------ Dialog */
+
+const FOCUSABLE =
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
+/**
+ * Modal dialog.
+ *
+ * The pages each grew their own version of this: a fixed div with a click
+ * handler and nothing else. That meant Tab walked out of the dialog into the
+ * page behind it, the background scrolled under the overlay, and screen
+ * readers were told nothing. Doing it once, properly, is the fix.
+ *
+ * Layout is header / scrolling body / footer, so a long job description never
+ * pushes the title or the apply button out of reach, and there is exactly one
+ * scroll container rather than a box inside a box.
+ */
+export function Dialog({
+  open,
+  onClose,
+  title,
+  subtitle,
+  eyebrow,
+  footer,
+  children,
+  size = 'lg',
+}: {
+  open: boolean
+  onClose: () => void
+  title: ReactNode
+  subtitle?: ReactNode
+  eyebrow?: string
+  footer?: ReactNode
+  children: ReactNode
+  size?: 'md' | 'lg'
+}) {
+  const panel = useRef<HTMLDivElement>(null)
+  const restoreFocus = useRef<HTMLElement | null>(null)
+  const titleId = useId()
+
+  useEffect(() => {
+    if (!open) return
+    restoreFocus.current = document.activeElement as HTMLElement | null
+
+    // Lock the page behind the overlay without letting it jump: replacing the
+    // scrollbar's width as padding keeps the layout still.
+    const { body } = document
+    const previousOverflow = body.style.overflow
+    const previousPadding = body.style.paddingRight
+    const scrollbar = window.innerWidth - document.documentElement.clientWidth
+    body.style.overflow = 'hidden'
+    if (scrollbar > 0) body.style.paddingRight = `${scrollbar}px`
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        event.stopPropagation()
+        onClose()
+        return
+      }
+      if (event.key !== 'Tab' || !panel.current) return
+      const focusable = [...panel.current.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
+        (element) => element.offsetParent !== null,
+      )
+      if (focusable.length === 0) {
+        event.preventDefault()
+        return
+      }
+      const first = focusable[0] as HTMLElement
+      const last = focusable[focusable.length - 1] as HTMLElement
+      const active = document.activeElement
+      if (event.shiftKey && (active === first || active === panel.current)) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+
+    document.addEventListener('keydown', onKeyDown, true)
+    // Focus the panel itself rather than the first control, so a screen reader
+    // reads the title before anything else.
+    panel.current?.focus()
+
+    return () => {
+      document.removeEventListener('keydown', onKeyDown, true)
+      body.style.overflow = previousOverflow
+      body.style.paddingRight = previousPadding
+      restoreFocus.current?.focus?.()
+    }
+  }, [open, onClose])
+
+  if (!open) return null
+
+  // Rendered into <body>, not in place. `<main>` carries an entry animation,
+  // and any transform on an ancestor makes `position: fixed` resolve against
+  // that element instead of the viewport — which is why the dialog used to
+  // open half off-screen and scroll with the page behind it.
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-ink/55 backdrop-blur-[2px] sm:items-center sm:p-4"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose()
+      }}
+    >
+      <div
+        ref={panel}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        className={cx(
+          'toon flex w-full flex-col overflow-hidden bg-white focus:outline-none',
+          // Full-height sheet on phones, floating card from `sm` up.
+          'h-[92vh] rounded-t-blob sm:h-auto sm:max-h-[88vh] sm:rounded-blob',
+          size === 'lg' ? 'sm:max-w-3xl' : 'sm:max-w-xl',
+        )}
+      >
+        <header className="flex shrink-0 items-start justify-between gap-4 border-b-[3px] border-ink bg-butter-100 px-5 py-4 sm:px-7">
+          <div className="min-w-0">
+            {eyebrow && (
+              <p className="text-xs font-bold tracking-wide text-ink-soft uppercase">{eyebrow}</p>
+            )}
+            <h2 id={titleId} className="mt-0.5 text-xl leading-tight sm:text-2xl">
+              {title}
+            </h2>
+            {subtitle && <div className="mt-0.5 text-sm font-semibold text-ink-soft">{subtitle}</div>}
+          </div>
+          <Button size="sm" variant="ghost" onClick={onClose} aria-label="Close dialog">
+            ✕
+          </Button>
+        </header>
+
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-5 sm:px-7">
+          {children}
+        </div>
+
+        {footer && (
+          <footer className="shrink-0 border-t-[3px] border-ink bg-butter-50 px-5 py-3.5 sm:px-7">
+            {footer}
+          </footer>
+        )}
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
+/* ----------------------------------------------------------------- Metrics */
+
+/** Label-over-value pair, used for the job facts grid. */
+export function Fact({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-[11px] font-bold tracking-wide text-ink-soft uppercase">{label}</div>
+      <div className="mt-0.5 text-sm font-semibold break-words">{children}</div>
+    </div>
+  )
+}
+
+/** Horizontal bar for one component of a match score. */
+export function ScoreBar({ label, value, max }: { label: string; value: number; max: number }) {
+  const pct = max <= 0 ? 0 : Math.min(100, Math.round((value / max) * 100))
+  return (
+    <div>
+      <div className="flex items-baseline justify-between gap-2 text-xs font-semibold">
+        <span>{label}</span>
+        <span className="tabular-nums text-ink-soft">
+          {value}/{Math.round(max)}
+        </span>
+      </div>
+      <div className="mt-1 h-3 overflow-hidden rounded-full border-[2.5px] border-ink bg-butter-100">
+        <div
+          className="h-full bg-sky-pop transition-[width] duration-500"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
   )
 }
 

@@ -9,6 +9,8 @@ const nav = [
   { to: '/app/scraped', emoji: '🔎', label: 'Scraped Jobs' },
   { to: '/app/jobs', emoji: '📮', label: 'Applications' },
   { to: '/app/referrals', emoji: '🤝', label: 'Referrals' },
+  { to: '/app/outreach', emoji: '🎯', label: 'Get Referred' },
+  { to: '/app/inbox', emoji: '🔔', label: 'Notifications' },
   { to: '/app/profile', emoji: '🧳', label: 'My Kit' },
 ]
 

@@ -75,8 +75,8 @@ export function Hunt() {
         setPortals(portalsRes.data)
         setBaseResume(resumeRes.data)
         setPortalAccounts(accountsRes.data)
-        setCandidates(statusRes.data.candidates)
-        setSelectedCandidates(statusRes.data.candidates.slice(0, 100).map((candidate) => candidate.id))
+        const runId = statusRes.data.currentRun?.id
+        if (statusRes.data.awaitingApproval && runId) void loadCandidates(runId)
       })
       .catch((err) => {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load the hunt.')
@@ -88,6 +88,42 @@ export function Hunt() {
 
   const running = status?.running ?? false
   const awaitingApproval = status?.awaitingApproval ?? false
+
+  // While a hunt is out, poll for it to come back. Stops as soon as the run
+  // leaves a running state, and cleans up if the page is left mid-hunt.
+  useEffect(() => {
+    if (!running) return
+    let cancelled = false
+    const timer = window.setInterval(() => {
+      api
+        .get<HuntStatus>('/hunt/status')
+        .then(({ data }) => {
+          if (cancelled) return
+          setStatus(data)
+          const runId = data.currentRun?.id
+          if (data.awaitingApproval && runId) void loadCandidates(runId)
+          if (data.currentRun?.error) setError(data.currentRun.error)
+        })
+        .catch(() => {
+          // A dropped poll is not worth an error banner; the next tick retries.
+        })
+    }, 3000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [running])
+
+  async function loadCandidates(runId: string): Promise<void> {
+    try {
+      const { data } = await api.get<HuntCandidate[]>(`/hunt/runs/${runId}/candidates`)
+      setCandidates(data)
+      setSelectedCandidates(data.slice(0, 100).map((candidate) => candidate.id))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load the candidate list.')
+    }
+  }
   const connected = portals.filter((p) => p.connected).length
   const submitted = status?.currentRun?.applicationsSubmitted ?? 0
   const target = status?.currentRun?.targetApplications ?? form?.dailyTarget ?? 50
@@ -95,13 +131,18 @@ export function Hunt() {
   async function startHunt() {
     setBusy(true)
     setError('')
+    setWarnings([])
+    setCandidates([])
     try {
+      // The server now answers as soon as the run exists and scrapes in the
+      // background, so the button stops being a twenty-second freeze; the
+      // polling effect below takes it from here.
       const { data } = await api.post<HuntStartResult>('/hunt/start', {})
-      setWarnings(data.warnings)
-      setCandidates(data.candidates)
-      setSelectedCandidates(data.candidates.slice(0, 100).map((candidate) => candidate.id))
-      const { data: fresh } = await api.get<HuntStatus>('/hunt/status')
-      setStatus(fresh)
+      setStatus((current) =>
+        current
+          ? { ...current, running: true, awaitingApproval: false, currentRun: data, candidateCount: 0 }
+          : current,
+      )
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not start the hunt.')
     } finally {
@@ -282,7 +323,11 @@ export function Hunt() {
               {running ? '● hunting right now' : awaitingApproval ? 'review needed' : '○ idle'}
             </Chip>
             <h3 className="mt-2 text-3xl">
-              {running ? 'Out in the wild.' : awaitingApproval ? `${candidates.length} jobs await approval.` : 'Ready when you are.'}
+              {running
+                ? 'Out in the wild.'
+                : awaitingApproval
+                  ? `${status?.candidateCount ?? candidates.length} jobs await approval.`
+                  : 'Ready when you are.'}
             </h3>
             <p className="mt-1 text-sm font-semibold text-ink-soft">
               {connected} sources enabled · target {form.dailyTarget} applications daily

@@ -12,7 +12,10 @@ import type { AuthSession } from './types'
  */
 
 const BASE_URL = (
-  (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:6060'
+  // The reserved development port. This used to fall back to 6060, which stopped
+  // being right when the ports moved and would silently point a checkout with no
+  // .env at nothing.
+  (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:46460'
 ).replace(/\/$/, '')
 
 export { BASE_URL }
