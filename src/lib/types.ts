@@ -477,3 +477,21 @@ export type FullKit = {
   updatedAt: string | null
   employments: Employment[]
 }
+
+/** The answers a portal form needs, which intake deliberately never asks for. */
+export interface ApplyField {
+  id: string
+  label: string
+  help?: string
+  placeholder?: string
+  required: boolean
+  value: string | null
+}
+
+export interface ApplyFieldsState {
+  fields: ApplyField[]
+  missingRequired: string[]
+  missingOptional: string[]
+  canApply: boolean
+  hasBaseResume: boolean
+}

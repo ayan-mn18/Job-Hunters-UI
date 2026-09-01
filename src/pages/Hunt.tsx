@@ -11,7 +11,7 @@ import {
   Toggle,
 } from '../components/ui'
 import { api, BASE_URL } from '../lib/api'
-import type { HuntCandidate, HuntSpec, HuntStartResult, HuntStatus, Portal, PortalAccount, Resume } from '../lib/types'
+import type { HuntCandidate, HuntSpec, HuntStartResult, HuntStatus, Portal, PortalAccount, Resume, ApplyFieldsState } from '../lib/types'
 
 const steps = [
   { n: 1, emoji: '📄', title: 'Read resume', note: 'pull skills, years, titles' },
@@ -54,6 +54,7 @@ export function Hunt() {
   const [candidates, setCandidates] = useState<HuntCandidate[]>([])
   const [selectedCandidates, setSelectedCandidates] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
+  const [applyFields, setApplyFields] = useState<ApplyFieldsState | null>(null)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState('')
@@ -168,6 +169,20 @@ export function Hunt() {
   async function approveBatch() {
     const runId = status?.currentRun?.id
     if (!runId || selectedCandidates.length === 0) return
+
+    // Ask for the form answers *before* queueing rather than letting the run
+    // start and fail one application at a time on a missing phone number.
+    try {
+      const { data: fields } = await api.get<ApplyFieldsState>('/intake/apply-fields')
+      if (!fields.canApply) {
+        setApplyFields(fields)
+        return
+      }
+    } catch {
+      // If the check itself fails, let the approval through — the server
+      // gates it too, and blocking on a failed precheck would be worse.
+    }
+
     setBusy(true)
     setError('')
     try {
@@ -178,6 +193,25 @@ export function Hunt() {
       setSelectedCandidates([])
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not approve this batch.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /** Collects the missing form answers, then continues the approval. */
+  async function saveApplyFields(answers: Record<string, string>) {
+    setBusy(true)
+    setError('')
+    try {
+      const { data: fields } = await api.post<ApplyFieldsState>('/intake/apply-fields', answers)
+      if (!fields.canApply) {
+        setApplyFields(fields)
+        return
+      }
+      setApplyFields(null)
+      await approveBatch()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save those details.')
     } finally {
       setBusy(false)
     }
@@ -596,6 +630,100 @@ export function Hunt() {
             </Card>
           </div>
         </section>
+      </div>
+
+      {applyFields && (
+        <ApplyFieldsPrompt
+          state={applyFields}
+          busy={busy}
+          onCancel={() => setApplyFields(null)}
+          onSave={(answers) => void saveApplyFields(answers)}
+        />
+      )}
+    </div>
+  )
+}
+
+/**
+ * Asked once, at the first application that needs these.
+ *
+ * Intake never asks for a phone number because it cannot change which jobs you
+ * see. It can stop every one of them being submitted, though, so this is the
+ * moment it earns the interruption.
+ */
+function ApplyFieldsPrompt({
+  state,
+  busy,
+  onCancel,
+  onSave,
+}: {
+  state: ApplyFieldsState
+  busy: boolean
+  onCancel: () => void
+  onSave: (answers: Record<string, string>) => void
+}) {
+  const [answers, setAnswers] = useState<Record<string, string>>(() =>
+    Object.fromEntries(state.fields.map((field) => [field.id, field.value ?? ''])),
+  )
+
+  const missingRequired = state.fields.filter(
+    (field) => field.required && !(answers[field.id] ?? '').trim(),
+  )
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4">
+      <div className="toon max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-3xl bg-butter-100 p-6">
+        <h2 className="text-2xl">One thing before Hunty applies</h2>
+        <p className="mt-2 text-sm font-semibold text-ink-soft">
+          {state.hasBaseResume
+            ? 'Every application form asks for these. Answer once and Hunty reuses them.'
+            : 'Upload a resume in My Kit first — every application needs one attached.'}
+        </p>
+
+        <div className="mt-5 flex flex-col gap-3">
+          {state.fields
+            .filter((field) => field.required || !field.value)
+            .map((field) => (
+              <label key={field.id} className="block">
+                <span className="font-display text-sm font-bold">
+                  {field.label}
+                  {field.required && <span className="text-coral"> *</span>}
+                </span>
+                {field.help && (
+                  <span className="mt-0.5 block text-xs font-semibold text-ink-soft">{field.help}</span>
+                )}
+                <Input
+                  className="mt-1"
+                  value={answers[field.id] ?? ''}
+                  placeholder={field.placeholder}
+                  onChange={(event) =>
+                    setAnswers((current) => ({ ...current, [field.id]: event.target.value }))
+                  }
+                />
+              </label>
+            ))}
+        </div>
+
+        <p className="mt-4 text-xs font-semibold text-ink-soft">
+          Blank optional answers are fine — Hunty will pause on any form that insists, rather than
+          guessing on your behalf.
+        </p>
+
+        <div className="mt-5 flex items-center gap-2">
+          <Button variant="ghost" size="sm" onClick={onCancel} disabled={busy}>
+            Not now
+          </Button>
+          <div className="ml-auto">
+            <Button
+              size="sm"
+              variant="blue"
+              disabled={busy || missingRequired.length > 0 || !state.hasBaseResume}
+              onClick={() => onSave(answers)}
+            >
+              {busy ? 'Saving…' : 'Save and apply'}
+            </Button>
+          </div>
+        </div>
       </div>
     </div>
   )
