@@ -52,11 +52,14 @@ export function AgentChat({
   messages,
   actions,
   thinking,
+  disabled,
   onSend,
 }: {
   messages: ChatMessage[]
   actions: QuickAction[]
   thinking: boolean
+  /** No run in flight — there is nobody on the other end to read this. */
+  disabled?: boolean
   onSend: (text: string) => void
 }) {
   const [draft, setDraft] = useState('')
@@ -133,7 +136,8 @@ export function AgentChat({
         <div className="flex gap-2">
           <Input
             value={draft}
-            placeholder="Tell the model what to do…"
+            disabled={disabled}
+            placeholder={disabled ? 'Start a run to talk to it…' : 'Tell the model what to do…'}
             onChange={(event) => setDraft(event.target.value)}
             // Implicit form submission on Enter is standard, and it did not
             // fire under automation. Asking the form to submit itself costs a
@@ -144,7 +148,7 @@ export function AgentChat({
               event.currentTarget.form?.requestSubmit()
             }}
           />
-          <Button size="sm" variant="blue" type="submit">
+          <Button size="sm" variant="blue" type="submit" disabled={disabled}>
             Send
           </Button>
         </div>

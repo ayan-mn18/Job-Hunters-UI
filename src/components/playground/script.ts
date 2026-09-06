@@ -1,29 +1,21 @@
 /**
- * The playground's fake run.
+ * What the playground shows, as the API describes it.
  *
- * Everything here is scripted. No browser is started, no model is called and
- * nothing is applied to — the point is to settle the *flow* before any of that
- * is wired up: where the browser sits, when the Apply button appears, what
- * happens the moment it gets stuck, and who gets asked.
- *
- * The postings are real ones read off Work at a Startup, and the form is shaped
- * like that site's actual application — a message to the founders rather than a
- * field-by-field questionnaire — so the mock does not teach a flow the real
- * thing cannot deliver.
+ * These mirror `src/modules/playground/routes.ts` on the server. The file
+ * started life holding a scripted fake run; the shapes survived the wiring-up
+ * because the mock was built against what the backend was going to return.
  */
 
-export type Phase =
-  | 'idle'
+export type RunStatus =
+  | 'queued'
   | 'launching'
   | 'searching'
   | 'shortlisted'
-  | 'opening'
-  | 'login_blocked'
-  | 'signing_in'
-  | 'filling'
-  | 'field_blocked'
-  | 'submitting'
+  | 'applying'
+  | 'blocked'
   | 'submitted'
+  | 'failed'
+  | 'cancelled'
 
 export type Speaker = 'huntly' | 'agent' | 'llm' | 'user' | 'system'
 
@@ -31,135 +23,76 @@ export interface ChatMessage {
   id: string
   speaker: Speaker
   text: string
-  /** Renders the message as a callout rather than a plain line. */
-  kind?: 'stuck' | 'draft' | 'refused' | 'success'
+  kind?: 'stuck' | 'draft' | 'refused' | 'success' | null
 }
 
-export interface Posting {
-  id: string
+export interface ShortlistEntry {
+  url: string
   title: string
   company: string
-  batch: string
   location: string
-  salary: string
-  experience: string
+  salary: string | null
+  experience: string | null
   score: number
   reasons: string[]
 }
 
-export const POSTINGS: Posting[] = [
-  {
-    id: '94543',
-    title: 'Lead, Engineer',
-    company: 'Noora Health',
-    batch: 'W14',
-    location: 'Bengaluru, KA, IN',
-    salary: '—',
-    experience: '6+ years',
-    score: 91,
-    reasons: [
-      'Same city as you — Bengaluru, on-site',
-      'Backend + Postgres, which is most of your last four years',
-      'Asks for 6+ years; you have 6',
-    ],
-  },
-  {
-    id: '103934',
-    title: 'Senior Software Engineer, Data Systems',
-    company: 'Hive',
-    batch: 'S14',
-    location: 'Remote (US)',
-    salary: '—',
-    experience: '5+ years',
-    score: 78,
-    reasons: ['Stack matches', 'Remote, but US hours'],
-  },
-  {
-    id: '103933',
-    title: 'Senior Software Engineer, Machine Learning',
-    company: 'Hive',
-    batch: 'S14',
-    location: 'Remote (CA)',
-    salary: '$124K – $188K',
-    experience: '5+ years',
-    score: 64,
-    reasons: ['ML-heavy; your experience is backend'],
-  },
-  {
-    id: '107082',
-    title: 'Head of ML',
-    company: 'The Subvocal Company',
-    batch: 'F26',
-    location: 'San Francisco, CA, US',
-    salary: '$150K – $200K',
-    experience: '3+ years',
-    score: 41,
-    reasons: ['Leadership scope beyond your current level'],
-  },
-]
-
-export const BEST = POSTINGS[0] as Posting
-
-export type FieldState = 'pending' | 'filling' | 'filled' | 'blocked' | 'refused'
-
-export interface FormField {
-  id: string
+export interface FilledField {
   label: string
   value: string
-  /** Long answers render as a textarea in the mock form. */
-  long?: boolean
-  state: FieldState
-  /** Shown under a blocked or refused field. */
-  note?: string
 }
 
-export const FORM: FormField[] = [
-  { id: 'name', label: 'Full name', value: 'Ada Lovelace', state: 'pending' },
-  { id: 'email', label: 'Email', value: 'ada@example.com', state: 'pending' },
-  { id: 'phone', label: 'Phone', value: '+91 90000 00000', state: 'pending' },
-  { id: 'linkedin', label: 'LinkedIn', value: 'linkedin.com/in/ada', state: 'pending' },
-  { id: 'resume', label: 'Résumé', value: 'ada-lovelace-backend.pdf', state: 'pending' },
-  {
-    id: 'message',
-    label: 'Why do you want to work at Noora Health?',
-    long: true,
-    value:
-      "I've spent six years building backend systems where the failure mode is someone not getting "
-      + 'something they needed — payments, then health records at Example Ltd, where I owned the '
-      + 'Postgres layer behind patient discharge summaries. Noora is doing that at a scale where the '
-      + "hospital is the integration surface, and I'd like to work on that directly.",
-    state: 'pending',
-  },
-  {
-    id: 'ctc',
-    label: 'Expected annual compensation (INR) *',
-    value: '',
-    state: 'pending',
-    note: 'Your Kit has no expected CTC, and this is not a number to guess at.',
-  },
-  {
-    id: 'visa',
-    label: 'Will you now or in the future require visa sponsorship? *',
-    value: '',
-    state: 'pending',
-    note: 'Huntly never answers visa, demographic or disability questions on your behalf.',
-  },
+export interface BlockedField {
+  label: string
+  why: string
+}
+
+export interface PlaygroundRun {
+  id: string
+  prompt: string
+  status: RunStatus
+  skillId: string | null
+  liveUrl: string | null
+  shortlist: ShortlistEntry[]
+  chosen: { url: string; title: string | null; company: string | null } | null
+  filledFields: FilledField[]
+  blockedFields: BlockedField[]
+  pendingQuestion: string | null
+  dryRun: boolean
+  emailSentAt: string | null
+  applicationId: string | null
+  error: string | null
+  createdAt: string
+  completedAt: string | null
+}
+
+/** Statuses where the run is still doing something and the socket matters. */
+export const LIVE_STATUSES: RunStatus[] = [
+  'queued',
+  'launching',
+  'searching',
+  'shortlisted',
+  'applying',
+  'blocked',
 ]
 
-/** Fields that fill without anyone being asked anything. */
-export const AUTO_FIELD_IDS = ['name', 'email', 'phone', 'linkedin', 'resume', 'message']
+export const STATUS_LABEL: Record<RunStatus, string> = {
+  queued: 'Waiting its turn',
+  launching: 'Starting a browser',
+  searching: 'Reading the board',
+  shortlisted: 'Found a match',
+  applying: 'Filling the application',
+  blocked: 'Stuck — needs you',
+  submitted: 'Done',
+  failed: 'Failed',
+  cancelled: 'Stopped',
+}
 
 export const SUGGESTED_PROMPTS = [
   'search the best suitable job on workatastartup.com',
   'find a remote backend role at a YC startup and apply',
   'apply to the closest match to my kit on workatastartup.com',
 ]
-
-let counter = 0
-export function say(speaker: Speaker, text: string, kind?: ChatMessage['kind']): ChatMessage {
-  counter += 1
-  return { id: `m${counter}`, speaker, text, ...(kind ? { kind } : {}) }
-}
 
 export const SPEAKER_LABEL: Record<Speaker, string> = {
   huntly: 'Huntly',
@@ -175,4 +108,11 @@ export const SPEAKER_EMOJI: Record<Speaker, string> = {
   llm: '🧠',
   user: '🙂',
   system: '⚙️',
+}
+
+let counter = 0
+/** A local-only message, for things the UI says before the server hears them. */
+export function localMessage(speaker: Speaker, text: string, kind?: ChatMessage['kind']): ChatMessage {
+  counter += 1
+  return { id: `local-${counter}`, speaker, text, ...(kind ? { kind } : {}) }
 }

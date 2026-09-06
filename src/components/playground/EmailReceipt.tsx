@@ -1,5 +1,5 @@
 import { Button, Chip } from '../ui'
-import { BEST, type FormField } from './script'
+import type { BlockedField, FilledField, PlaygroundRun } from './script'
 
 /**
  * The receipt.
@@ -15,32 +15,25 @@ import { BEST, type FormField } from './script'
  * run was asking.
  */
 /** Field labels read the way a person would say them, not the way a form does. */
-function shortLabel(field: FormField): string {
-  return field.label
-    .replace(/\s*\*$/, '')
-    .replace(/^Why do you want to work at .+$/, 'your message to the founders')
-    .replace(/^Expected annual compensation.*$/, 'expected compensation')
-    .replace(/^Will you now or in the future require visa sponsorship.*$/, 'visa sponsorship')
-    .toLowerCase()
+function shortLabel(field: FilledField | BlockedField): string {
+  return field.label.replace(/\s*\*$/, '').trim().toLowerCase()
 }
 
 export function EmailReceipt({
-  fields,
+  run,
   onDismiss,
 }: {
-  fields: FormField[]
+  run: PlaygroundRun
   onDismiss: () => void
 }) {
-  // The receipt is only worth anything if it is accurate. Reading it off the
-  // form means it cannot claim something went in that did not — which the
-  // first version did, the moment anyone chose to leave a field blank.
-  const sent = fields.filter((field) => field.state === 'filled').map(shortLabel)
-  const blank = fields
-    .filter((field) => field.state === 'refused' || field.state === 'blocked')
-    .map(shortLabel)
-  const refusedByPolicy = fields.some(
-    (field) => field.id === 'visa' && field.state !== 'filled',
-  )
+  // Read off the run rather than written as fixed copy. An earlier version
+  // listed every field as sent regardless, which on a run where something had
+  // been left blank was simply untrue — and this email is the only artifact of
+  // a run that outlives it.
+  const sent = run.filledFields.map(shortLabel)
+  const blank = run.blockedFields.map(shortLabel)
+  const refusedByPolicy = run.blockedFields.some((field) => field.why === 'sensitive_field')
+  const job = run.chosen
 
   return (
     <div className="absolute inset-x-4 bottom-4 z-10 animate-bob">
@@ -48,7 +41,9 @@ export function EmailReceipt({
         <div className="flex items-center gap-2 border-b-[3px] border-ink bg-mint/25 px-3.5 py-2">
           <span className="text-lg">📧</span>
           <span className="font-display text-sm font-bold">Gmail · Inbox</span>
-          <Chip tone="mint">delivered</Chip>
+          <Chip tone={run.emailSentAt ? 'mint' : 'white'}>
+            {run.emailSentAt ? 'delivered' : 'not sent'}
+          </Chip>
           <span className="ml-auto text-[11px] font-semibold text-ink-soft">just now</span>
           <button
             type="button"
@@ -64,17 +59,19 @@ export function EmailReceipt({
           <div className="flex flex-wrap items-baseline gap-x-2 text-[13px]">
             <span className="font-display font-bold">Hunty</span>
             <span className="text-ink-soft">&lt;hunty@huntly.app&gt;</span>
-            <span className="text-ink-soft">→ ada@example.com</span>
+            <span className="text-ink-soft">→ your connected inbox</span>
           </div>
 
           <p className="mt-1.5 font-display text-[15px] font-bold">
-            ✅ Applied: {BEST.title} at {BEST.company}
+            {run.dryRun ? '🧪 Dry run: ' : '✅ Applied: '}
+            {job?.title} at {job?.company}
           </p>
 
           <div className="mt-2 flex flex-col gap-1.5 text-[13px] leading-snug">
             <p>
-              Your application went in. {BEST.company} ({BEST.batch}) · {BEST.location} · applied
-              just now.
+              {run.dryRun
+                ? 'The form was filled and nothing was submitted — this was a dry run.'
+                : 'Your application went in.'}
             </p>
             <p className="text-ink-soft">
               <span className="font-semibold text-ink">Sent:</span> {sent.join(', ')}.

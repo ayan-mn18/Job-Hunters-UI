@@ -2,373 +2,252 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AgentChat, type QuickAction } from '../components/playground/AgentChat'
 import { BrowserStage } from '../components/playground/BrowserStage'
 import { EmailReceipt } from '../components/playground/EmailReceipt'
+import { Shortlist } from '../components/playground/Shortlist'
 import {
-  AUTO_FIELD_IDS,
-  BEST,
-  FORM,
-  POSTINGS,
+  LIVE_STATUSES,
   SUGGESTED_PROMPTS,
-  say,
+  localMessage,
   type ChatMessage,
-  type FormField,
-  type Phase,
+  type PlaygroundRun,
+  type ShortlistEntry,
 } from '../components/playground/script'
+import { api, ApiError, BASE_URL, getAccessToken } from '../lib/api'
 import { Button, Card, Chip, Input, SectionTitle } from '../components/ui'
 
 /**
  * The playground.
  *
- * A single job, start to finish, with the browser visible the whole way and a
- * person able to cut in at any point. It exists because the product's current
- * output is a list of rows that either worked or did not, which tells you
- * nothing about *why* — and the parts most likely to go wrong (a login wall, a
- * question nobody can answer from the résumé) are exactly the parts that
- * disappear into a status column.
+ * One job, from a sentence to a confirmation email, with the browser visible
+ * the whole way. It exists because the rest of the product reports a status
+ * per row, which says nothing about *why* — and the parts most likely to go
+ * wrong, a login wall or a question nobody can answer from a résumé, are
+ * exactly the parts a status column hides.
  *
- * Nothing here is wired to anything. Every step is on a timer and the postings
- * are a fixed list, so the flow can be argued about before any of it is built.
+ * The run happens on the server. This page starts it, embeds the browser it
+ * opened, and relays what the agent and the model say. Everything arrives over
+ * one socket; the initial fetch is what makes reopening a run mid-flight work.
  */
 
-/**
- * On a wide screen the stage is pinned to the viewport so the page itself never
- * scrolls: the browser stays put and the conversation scrolls inside its own
- * panel. Without this the chat grows past the fold, and the moment the run gets
- * stuck — the one moment somebody needs to see — happens off screen.
- *
- * Stacked on a narrow screen, where a fixed height would squash both panels.
- */
 const STAGE_HEIGHT = 'lg:h-[calc(100vh-16rem)] lg:min-h-[32rem]'
+
+interface SocketEvent {
+  type: 'ready' | 'state' | 'message' | 'step'
+  runId?: string
+  status?: string
+  detail?: Record<string, unknown> | null
+  speaker?: ChatMessage['speaker']
+  body?: string
+  kind?: ChatMessage['kind']
+  index?: number
+  tool?: string
+  result?: string
+  ok?: boolean
+  at?: string
+}
 
 export function Playground() {
   const [prompt, setPrompt] = useState(SUGGESTED_PROMPTS[0] as string)
-  const [phase, setPhase] = useState<Phase>('idle')
+  const [run, setRun] = useState<PlaygroundRun | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [revealed, setRevealed] = useState(0)
-  const [fields, setFields] = useState<FormField[]>(FORM)
-  const [thinking, setThinking] = useState(false)
-  const [driving, setDriving] = useState(false)
+  const [starting, setStarting] = useState(false)
+  const [busy, setBusy] = useState(false)
   const [fullscreen, setFullscreen] = useState(false)
-  const [emailed, setEmailed] = useState(false)
-  const [applyOffered, setApplyOffered] = useState(false)
+  const [receiptOpen, setReceiptOpen] = useState(true)
 
-  const timers = useRef<ReturnType<typeof setTimeout>[]>([])
-
-  const after = useCallback((ms: number, run: () => void) => {
-    timers.current.push(setTimeout(run, ms))
-  }, [])
+  const socketRef = useRef<WebSocket | null>(null)
+  const runId = run?.id ?? null
+  const status = run?.status ?? null
+  const live = status !== null && LIVE_STATUSES.includes(status)
 
   const push = useCallback((...next: ChatMessage[]) => {
     setMessages((current) => [...current, ...next])
   }, [])
 
-  const setFieldState = useCallback((id: string, state: FormField['state']) => {
-    setFields((current) =>
-      current.map((field) => (field.id === id ? { ...field, state } : field)),
+  /** Re-reads the run. Also how a reopened tab catches up on a run in flight. */
+  const refresh = useCallback(async (id: string) => {
+    const { data } = await api.get<{
+      run: PlaygroundRun
+      messages: Array<{ id: string; speaker: ChatMessage['speaker']; body: string; kind: ChatMessage['kind'] }>
+    }>(`/playground/runs/${id}`)
+    setRun(data.run)
+    setMessages(
+      data.messages.map((message) => ({
+        id: message.id,
+        speaker: message.speaker,
+        text: message.body,
+        kind: message.kind,
+      })),
     )
   }, [])
 
-  // Every phase clears the timers of the one before it. Without this a reset
-  // mid-run leaves the old script still firing into the new one.
+  /**
+   * Reattach to whatever is already running.
+   *
+   * A run lives on the server and outlives the tab that started it — closing
+   * the page does not stop the browser, and coming back has to show the run
+   * rather than an empty stage. This is also what makes a question asked while
+   * nobody was looking answerable.
+   */
   useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const { data } = await api.get<PlaygroundRun[]>('/playground/runs')
+        const latest = data[0]
+        if (cancelled || !latest) return
+        if (!LIVE_STATUSES.includes(latest.status) && latest.status !== 'submitted') return
+        setRun(latest)
+        await refresh(latest.id)
+      } catch {
+        // An empty playground is the normal case; nothing to report.
+      }
+    })()
     return () => {
-      timers.current.forEach(clearTimeout)
-      timers.current = []
+      cancelled = true
     }
-  }, [phase])
+  }, [refresh])
 
+  // One socket per run. Events are small and every one matters, so unlike the
+  // apply live view there is nothing to throttle here.
   useEffect(() => {
-    if (phase === 'launching') {
-      after(1500, () => {
-        push(
-          say('agent', 'Browser ready. Signed in as you where I have a profile.'),
-          say('agent', 'Opening workatastartup.com/jobs'),
-        )
-        setPhase('searching')
-      })
-    }
+    if (!runId) return
+    const token = getAccessToken()
+    if (!token) return
 
-    if (phase === 'searching') {
-      POSTINGS.forEach((_, index) => after(320 * (index + 1), () => setRevealed(index + 1)))
-      after(1700, () => push(say('agent', 'Read 40 postings across 3 pages.')))
-      after(2000, () => setThinking(true))
-      after(3200, () => {
-        setThinking(false)
-        push(
-          say('llm', `Best match is ${BEST.title} at ${BEST.company} — ${BEST.score}/100.`),
-          say('llm', BEST.reasons.map((reason) => `· ${reason}`).join('\n')),
-        )
-        setApplyOffered(true)
-        setPhase('shortlisted')
-      })
-    }
+    const url = `${BASE_URL.replace(/^http/, 'ws')}/live/playground/${runId}?token=${encodeURIComponent(token)}`
+    const socket = new WebSocket(url)
+    socketRef.current = socket
 
-    if (phase === 'opening') {
-      after(1600, () => {
-        push(
-          say(
-            'agent',
-            'Stuck. The apply link went to a Y Combinator sign-in and I am not signed in on this browser.',
-            'stuck',
-          ),
-        )
-        setThinking(true)
-      })
-      after(2900, () => {
-        setThinking(false)
-        push(
-          say(
-            'llm',
-            'You connected a YC account to Huntly, so there is a saved profile with those cookies in it. I can reload the browser with that profile — or hand you the browser and you sign in yourself. I will not type a password.',
-          ),
-        )
-        setPhase('login_blocked')
-      })
-    }
+    socket.onmessage = (raw) => {
+      let event: SocketEvent
+      try {
+        event = JSON.parse(String(raw.data)) as SocketEvent
+      } catch {
+        return
+      }
 
-    if (phase === 'signing_in') {
-      after(1600, () => {
-        push(say('agent', 'Signed in. Back on the application form.'))
-        setPhase('filling')
-      })
-    }
-
-    if (phase === 'filling') {
-      AUTO_FIELD_IDS.forEach((id, index) => {
-        after(700 * index + 400, () => setFieldState(id, 'filling'))
-        after(700 * index + 1000, () => {
-          setFieldState(id, 'filled')
-          const field = FORM.find((item) => item.id === id)
-          if (field && id !== 'message') push(say('agent', `Filled ${field.label.toLowerCase()}.`))
-        })
-      })
-      const messageStart = 700 * (AUTO_FIELD_IDS.length - 1)
-      after(messageStart - 200, () =>
-        push(say('llm', 'Writing the note to the founders — this board is the note, not a form.')),
-      )
-      after(700 * AUTO_FIELD_IDS.length + 1200, () => {
-        setFieldState('ctc', 'blocked')
-        setFieldState('visa', 'refused')
-        push(
-          say(
-            'agent',
-            'Stuck. Two required questions left and I cannot answer either from your Kit.',
-            'stuck',
-          ),
-          say(
-            'llm',
-            'Visa sponsorship: left blank on purpose. Huntly never answers visa, demographic or disability questions on your behalf — a plausible guess on someone’s application is not a mistake you can apologise for later.',
-            'refused',
-          ),
-          say(
-            'llm',
-            'Expected annual compensation is required and your Kit has no number in it. What should I put? Type it below, or tell me to leave it blank.',
-            'stuck',
-          ),
-        )
-        setPhase('field_blocked')
-      })
-    }
-
-    if (phase === 'submitting') {
-      after(1800, () => {
-        push(say('agent', 'Submitted.', 'success'))
-        setPhase('submitted')
-      })
-    }
-
-    if (phase === 'submitted') {
-      after(1300, () => {
-        setEmailed(true)
-        push(say('huntly', 'Confirmation email sent to ada@example.com.', 'success'))
-      })
-    }
-  }, [phase, after, push, setFieldState])
-
-  const start = useCallback(() => {
-    timers.current.forEach(clearTimeout)
-    timers.current = []
-    setMessages([
-      say('user', prompt),
-      say('huntly', 'On it. Starting a browser and opening Work at a Startup.'),
-    ])
-    setRevealed(0)
-    setFields(FORM)
-    setThinking(false)
-    setDriving(false)
-    setEmailed(false)
-    setApplyOffered(false)
-    setPhase('launching')
-  }, [prompt])
-
-  const reset = useCallback(() => {
-    timers.current.forEach(clearTimeout)
-    timers.current = []
-    setPhase('idle')
-    setMessages([])
-    setRevealed(0)
-    setFields(FORM)
-    setThinking(false)
-    setDriving(false)
-    setEmailed(false)
-    setApplyOffered(false)
-  }, [])
-
-  const onSend = useCallback(
-    (text: string) => {
-      push(say('user', text))
-
-      // While a required field is open, anything typed is taken as the answer
-      // to it. That is the whole point of the panel being here.
-      if (phase === 'field_blocked') {
-        setFields((current) =>
-          current.map((field) =>
-            field.id === 'ctc' ? { ...field, value: text, state: 'filled' } : field,
-          ),
-        )
-        setThinking(true)
-        after(900, () => {
-          setThinking(false)
-          push(say('agent', `Put "${text}" in expected compensation. Submitting.`))
-          setPhase('submitting')
+      if (event.type === 'message' && event.body) {
+        push({
+          id: `${event.at ?? Date.now()}-${event.speaker ?? 'x'}-${event.body.slice(0, 12)}`,
+          speaker: event.speaker ?? 'system',
+          text: event.body,
+          kind: event.kind ?? null,
         })
         return
       }
 
-      setThinking(true)
-      after(1100, () => {
-        setThinking(false)
+      if (event.type === 'step' && event.tool) {
+        push({
+          id: `step-${event.index}-${event.tool}`,
+          speaker: 'agent',
+          text: `${event.tool} — ${event.result ?? ''}`,
+          kind: event.ok === false ? 'refused' : null,
+        })
+        return
+      }
+
+      if (event.type === 'state') {
+        // The state event carries the change but not the whole run — the
+        // shortlist and the filled fields come back on the re-read, which is
+        // one request per transition rather than a payload on every event.
+        void refresh(runId).catch(() => undefined)
+      }
+    }
+
+    return () => {
+      socketRef.current = null
+      socket.close()
+    }
+  }, [runId, push, refresh])
+
+  const start = useCallback(async () => {
+    setStarting(true)
+    setMessages([])
+    setReceiptOpen(true)
+    try {
+      const { data } = await api.post<PlaygroundRun>('/playground/runs', { prompt })
+      setRun(data)
+      await refresh(data.id)
+    } catch (error) {
+      push(
+        localMessage(
+          'system',
+          error instanceof ApiError ? error.message : 'Could not start a run.',
+          'stuck',
+        ),
+      )
+    } finally {
+      setStarting(false)
+    }
+  }, [prompt, refresh, push])
+
+  const act = useCallback(
+    async (path: string, body?: unknown) => {
+      if (!runId) return
+      setBusy(true)
+      try {
+        await api.post(`/playground/runs/${runId}/${path}`, body)
+        await refresh(runId)
+      } catch (error) {
         push(
-          say(
-            'llm',
-            phase === 'idle'
-              ? 'Nothing is running yet — start a hunt above and I will pick this up.'
-              : 'Noted. I will factor that in on the next step.',
+          localMessage(
+            'system',
+            error instanceof ApiError ? error.message : 'That did not go through.',
+            'stuck',
           ),
         )
-      })
+      } finally {
+        setBusy(false)
+      }
     },
-    [phase, push, after],
+    [runId, refresh, push],
+  )
+
+  const onSend = useCallback(
+    (text: string) => {
+      if (!runId || !live) return
+      // Shown immediately. The server echoes its own copy, which is why the
+      // local one is marked and replaced on the next re-read.
+      push(localMessage('user', text))
+      void act('message', { text })
+    },
+    [runId, live, push, act],
+  )
+
+  const onApply = useCallback(
+    (entry: ShortlistEntry) => {
+      push(localMessage('user', `Apply to ${entry.title} at ${entry.company}.`))
+      void act('apply', { url: entry.url })
+    },
+    [push, act],
   )
 
   const actions = useMemo<QuickAction[]>(() => {
-    if (phase === 'login_blocked' && !driving) {
+    if (!run) return []
+    if (run.status === 'blocked') {
+      // A sign-in question wants a different button from a missing-field one:
+      // there is nothing to leave blank, the browser on the left is the real
+      // thing, and the answer is simply that they have finished.
+      const signIn = /sign(ed)?[- ]?in|log(ged)? in|account/i.test(run.pendingQuestion ?? '')
       return [
-        {
-          label: 'Use my connected YC account',
-          variant: 'blue',
-          onClick: () => {
-            push(say('user', 'Use my connected YC account.'), say('agent', 'Loading your YC profile…'))
-            setPhase('signing_in')
-          },
-        },
-        {
-          label: 'I will sign in myself',
-          onClick: () => {
-            setDriving(true)
-            push(
-              say('user', 'I will sign in myself.'),
-              say('system', 'You are driving. Click straight into the browser on the left.'),
-            )
-          },
-        },
+        signIn
+          ? {
+              label: 'Done — carry on',
+              variant: 'blue' as const,
+              onClick: () => void act('answer', { text: 'done' }),
+            }
+          : {
+              label: 'Leave it blank and carry on',
+              onClick: () => void act('answer', { text: 'Leave it blank.' }),
+            },
+        { label: 'Stop this run', variant: 'ghost', onClick: () => void act('cancel') },
       ]
     }
-
-    if (phase === 'login_blocked' && driving) {
-      return [
-        {
-          label: 'Done — carry on',
-          variant: 'blue',
-          onClick: () => {
-            setDriving(false)
-            push(say('user', 'Done, carry on.'))
-            setPhase('signing_in')
-          },
-        },
-      ]
+    if (LIVE_STATUSES.includes(run.status)) {
+      return [{ label: 'Stop this run', variant: 'ghost', onClick: () => void act('cancel') }]
     }
-
-    if (phase === 'field_blocked') {
-      return [
-        {
-          label: 'Leave it blank and submit',
-          onClick: () => {
-            setFieldState('ctc', 'refused')
-            push(
-              say('user', 'Leave it blank and submit.'),
-              say('agent', 'Left blank. Submitting.'),
-            )
-            setPhase('submitting')
-          },
-        },
-        {
-          label: 'Skip this job',
-          onClick: () => {
-            push(say('user', 'Skip this job.'), say('huntly', 'Dropped. Nothing was submitted.'))
-            setPhase('idle')
-          },
-        },
-      ]
-    }
-
     return []
-  }, [phase, driving, push, setFieldState])
-
-  const running = phase !== 'idle'
-
-  const stage = (
-    <div
-      className={`grid gap-3 ${
-        fullscreen ? 'h-full grid-cols-[2.1fr_1fr]' : `lg:grid-cols-[1.9fr_1fr] ${STAGE_HEIGHT}`
-      }`}
-    >
-      <div className="relative flex min-h-[26rem] flex-col lg:min-h-0">
-        <BrowserStage phase={phase} revealed={revealed} fields={fields} driving={driving} />
-
-        {/* The Apply button waits for a person. Nothing is applied to until
-            somebody looks at the match and agrees with it. */}
-        {applyOffered && phase === 'shortlisted' && (
-          <div className="absolute right-4 bottom-4 animate-bob">
-            <Card className="flex items-center gap-3 p-3">
-              <div>
-                <p className="font-display text-sm font-bold">{BEST.title}</p>
-                <p className="text-xs text-ink-soft">
-                  {BEST.company} · {BEST.score}/100 match
-                </p>
-              </div>
-              <Button
-                variant="blue"
-                onClick={() => {
-                  setApplyOffered(false)
-                  push(
-                    say('user', 'Apply to this one.'),
-                    say('agent', 'Opening the posting and following the apply link.'),
-                  )
-                  setPhase('opening')
-                }}
-              >
-                Apply →
-              </Button>
-            </Card>
-          </div>
-        )}
-
-        {driving && (
-          <div className="absolute top-14 left-1/2 -translate-x-1/2">
-            <Chip tone="blue">you are driving — the agent is waiting</Chip>
-          </div>
-        )}
-
-        {emailed && <EmailReceipt fields={fields} onDismiss={() => setEmailed(false)} />}
-      </div>
-
-      <div className="flex min-h-[24rem] flex-col gap-3 lg:min-h-0">
-        <div className="min-h-0 flex-1">
-          <AgentChat messages={messages} actions={actions} thinking={thinking} onSend={onSend} />
-        </div>
-      </div>
-    </div>
-  )
+  }, [run, act])
 
   useEffect(() => {
     if (!fullscreen) return
@@ -379,12 +258,44 @@ export function Playground() {
     return () => window.removeEventListener('keydown', onKey)
   }, [fullscreen])
 
+  const stage = (
+    <div
+      className={`grid gap-3 ${
+        fullscreen ? 'h-full grid-cols-[2.1fr_1fr]' : `lg:grid-cols-[1.9fr_1fr] ${STAGE_HEIGHT}`
+      }`}
+    >
+      <div className="relative flex min-h-[26rem] flex-col lg:min-h-0">
+        <BrowserStage run={run} />
+
+        {run?.status === 'shortlisted' && (
+          <Shortlist entries={run.shortlist} busy={busy} onApply={onApply} />
+        )}
+
+        {run?.status === 'submitted' && receiptOpen && (
+          <EmailReceipt run={run} onDismiss={() => setReceiptOpen(false)} />
+        )}
+      </div>
+
+      <div className="flex min-h-[24rem] flex-col gap-3 lg:min-h-0">
+        <div className="min-h-0 flex-1">
+          <AgentChat
+            messages={messages}
+            actions={actions}
+            thinking={live && run?.status !== 'blocked' && run?.status !== 'shortlisted'}
+            disabled={!live}
+            onSend={onSend}
+          />
+        </div>
+      </div>
+    </div>
+  )
+
   if (fullscreen) {
     return (
       <div className="fixed inset-0 z-50 flex flex-col gap-2 bg-butter-100 p-3">
         <div className="flex shrink-0 items-center gap-2">
           <span className="font-display text-lg font-bold">Playground</span>
-          <Chip tone="white">{prompt}</Chip>
+          <Chip tone="white">{run?.prompt ?? prompt}</Chip>
           <Button size="sm" variant="ghost" className="ml-auto" onClick={() => setFullscreen(false)}>
             Exit full screen (Esc)
           </Button>
@@ -407,28 +318,36 @@ export function Playground() {
           <Input
             value={prompt}
             placeholder="search the best suitable job on workatastartup.com"
+            disabled={live || starting}
             onChange={(event) => setPrompt(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === 'Enter' && !running) start()
+              if (event.key === 'Enter' && !live && !starting) void start()
             }}
           />
-          {running ? (
+          {live ? (
             <div className="flex gap-2">
-              <Button variant="ghost" onClick={reset}>
-                Reset
+              <Button variant="ghost" onClick={() => void act('cancel')}>
+                Stop
               </Button>
               <Button variant="ghost" onClick={() => setFullscreen(true)}>
                 ⛶ Full screen
               </Button>
             </div>
           ) : (
-            <Button variant="blue" onClick={start} className="shrink-0">
-              Run it →
-            </Button>
+            <div className="flex gap-2">
+              <Button variant="blue" onClick={() => void start()} disabled={starting}>
+                {starting ? 'Starting…' : 'Run it →'}
+              </Button>
+              {run && (
+                <Button variant="ghost" onClick={() => setFullscreen(true)}>
+                  ⛶ Full screen
+                </Button>
+              )}
+            </div>
           )}
         </div>
 
-        {!running && (
+        {!live && !run && (
           <div className="mt-3 flex flex-wrap gap-2">
             {SUGGESTED_PROMPTS.map((suggestion) => (
               <button key={suggestion} type="button" onClick={() => setPrompt(suggestion)}>
@@ -437,13 +356,16 @@ export function Playground() {
             ))}
           </div>
         )}
+
+        {run?.dryRun && (
+          <p className="mt-3 text-xs font-semibold text-ink-soft">
+            Dry run: the form gets filled and nothing is submitted. Turn off APPLY_DRY_RUN on the
+            server to send applications for real.
+          </p>
+        )}
       </Card>
 
       {stage}
-
-      <p className="text-center text-xs text-ink-soft">
-        Nothing here is connected yet — every step is on a timer. This is for arguing about the flow.
-      </p>
     </div>
   )
 }
