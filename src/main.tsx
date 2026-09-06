@@ -16,6 +16,7 @@ import { Notifications } from './pages/Notifications'
 import { Outreach } from './pages/Outreach'
 import { Referrals } from './pages/Referrals'
 import { Kit } from './pages/Kit'
+import { Playground } from './pages/Playground'
 
 const router = createBrowserRouter([
   {
@@ -54,6 +55,7 @@ const router = createBrowserRouter([
         element: <Shell />,
         children: [
           { index: true, element: <Den /> },
+          { path: 'playground', element: <Playground /> },
           { path: 'hunt', element: <Hunt /> },
           { path: 'scraped', element: <ScrapedJobs /> },
           { path: 'jobs', element: <Applications /> },
