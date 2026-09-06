@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Button, Card, Chip, Empty, SectionTitle } from '../components/ui'
 import { api } from '../lib/api'
+import { useGmailOAuthReturn } from '../lib/gmailOAuth'
 
 interface Notification {
   id: string
@@ -86,6 +87,15 @@ export function Notifications() {
   useEffect(() => {
     void load()
   }, [load])
+
+  useGmailOAuthReturn((message) => {
+    setConnecting(false)
+    if (message) {
+      setError(message)
+      return
+    }
+    void load()
+  })
 
   async function markRead(id: string) {
     // Optimistic: the row is already read by the time the request lands, and

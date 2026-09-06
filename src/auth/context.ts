@@ -7,6 +7,8 @@ export type AuthValue = {
   user: User | null
   ready: boolean
   signIn: (email: string, password: string) => Promise<User>
+  startGoogleSignIn: () => Promise<string>
+  signInWithGoogle: (code: string, state: string) => Promise<User>
   signUp: (name: string, email: string, password: string) => Promise<User>
   completeOnboarding: (kit: Partial<KitDraft>) => Promise<void>
   signOut: () => void

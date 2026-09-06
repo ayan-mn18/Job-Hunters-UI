@@ -217,6 +217,14 @@ export type Application = {
 
 export type ApplicationCounts = Record<ApplicationStatus, number> & { all: number }
 
+/** What Hunty saw before it gave up and asked for review. */
+export type ApplicationReview = {
+  attemptId: string | null
+  reason: string | null
+  unresolvedFields: Array<{ type: string; label: string }>
+  evidenceUrl: string | null
+}
+
 /* ---------------------------------------------------------------- portals */
 
 export type Portal = {
@@ -367,6 +375,7 @@ export type HuntRun = {
   id: string
   status: string
   running: boolean
+  applying: boolean
   awaitingApproval: boolean
   targetApplications: number
   jobsScraped: number
@@ -385,11 +394,19 @@ export type HuntRun = {
 
 export type HuntStatus = {
   running: boolean
+  applying: boolean
   awaitingApproval: boolean
   dailyTarget: number
   currentRun: HuntRun | null
   /** Candidate rows are fetched separately, so polling stays cheap. */
   candidateCount: number
+  /** The attempt currently in front of a browser, if any — null between attempts. */
+  liveAttemptId: string | null
+  /**
+   * A hosted browser you can open and click in directly. Null when the browser
+   * is running locally, in which case the live view streams frames instead.
+   */
+  liveUrl: string | null
   queueStubbed: boolean
 }
 

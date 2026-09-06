@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { useAuth } from '../auth/context'
 import { Button, Card, Chip, Dialog, Empty, Field, Input, SectionTitle } from '../components/ui'
 import { api } from '../lib/api'
+import { normaliseHttpUrl } from '../lib/urls'
 import type {
   Employment,
   FullKit,
@@ -80,7 +81,15 @@ function fieldError(key: keyof KitForm, value: string): string | null {
     return 'Use digits, spaces and + only.'
   }
   if ((key === 'linkedinUrl' || key === 'githubUrl' || key === 'portfolioUrl')) {
-    if (/\s/.test(trimmed) || !/^([a-z]+:\/\/)?[\w-]+(\.[\w-]+)+(\/\S*)?$/i.test(trimmed)) {
+    const candidate = normaliseHttpUrl(trimmed)
+    let valid = false
+    try {
+      const parsed = new URL(candidate)
+      valid = (parsed.protocol === 'http:' || parsed.protocol === 'https:') && parsed.hostname.includes('.')
+    } catch {
+      valid = false
+    }
+    if (/\s/.test(trimmed) || !valid) {
       return 'That does not look like a web address.'
     }
   }
@@ -221,7 +230,12 @@ export function Kit() {
   const set = (key: keyof KitForm) => (e: { target: { value: string } }) =>
     setForm((f) => (f ? { ...f, [key]: e.target.value } : f))
 
-  const blur = (key: keyof KitForm) => () => setTouched((current) => ({ ...current, [key]: true }))
+  const blur = (key: keyof KitForm) => () => {
+    setTouched((current) => ({ ...current, [key]: true }))
+    if (key === 'linkedinUrl' || key === 'githubUrl' || key === 'portfolioUrl') {
+      setForm((current) => (current ? { ...current, [key]: normaliseHttpUrl(current[key]) } : current))
+    }
+  }
 
   const dirty = useMemo(() => {
     if (!form || !baseline) return false
@@ -664,7 +678,7 @@ export function Kit() {
                   value={form.linkedinUrl}
                   onChange={set('linkedinUrl')}
                   onBlur={blur('linkedinUrl')}
-                  placeholder="linkedin.com/in/you"
+                  placeholder="https://linkedin.com/in/you"
                   aria-invalid={Boolean(touched.linkedinUrl && errors.linkedinUrl)}
                   className={touched.linkedinUrl && errors.linkedinUrl ? 'bg-coral/15!' : undefined}
                 />
@@ -674,7 +688,7 @@ export function Kit() {
                   value={form.githubUrl}
                   onChange={set('githubUrl')}
                   onBlur={blur('githubUrl')}
-                  placeholder="github.com/you"
+                  placeholder="https://github.com/you"
                   aria-invalid={Boolean(touched.githubUrl && errors.githubUrl)}
                   className={touched.githubUrl && errors.githubUrl ? 'bg-coral/15!' : undefined}
                 />
@@ -684,7 +698,7 @@ export function Kit() {
                   value={form.portfolioUrl}
                   onChange={set('portfolioUrl')}
                   onBlur={blur('portfolioUrl')}
-                  placeholder="yoursite.com"
+                  placeholder="https://yoursite.com"
                   aria-invalid={Boolean(touched.portfolioUrl && errors.portfolioUrl)}
                   className={touched.portfolioUrl && errors.portfolioUrl ? 'bg-coral/15!' : undefined}
                 />
@@ -707,7 +721,7 @@ export function Kit() {
                 <Input
                   value={linkedinProfileUrl}
                   onChange={(event) => setLinkedinProfileUrl(event.target.value)}
-                  placeholder="linkedin.com/in/you"
+                  placeholder="https://linkedin.com/in/you"
                   disabled={linkedin?.connected}
                 />
               </Field>

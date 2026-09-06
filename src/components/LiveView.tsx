@@ -62,7 +62,20 @@ const BLOCKED_LABEL: Record<string, string> = {
   sensitive_field: 'a question it will not answer for you',
 }
 
-export function LiveView({ attemptId, onClose }: { attemptId: string; onClose: () => void }) {
+export function LiveView({
+  attemptId,
+  liveUrl,
+  onClose,
+}: {
+  attemptId: string
+  /**
+   * A hosted browser, embeddable directly. When this is set the panel shows
+   * the real browser rather than a stream of frames, and taking over is just
+   * clicking in it — there is nothing to forward and no scaling to get wrong.
+   */
+  liveUrl: string | null
+  onClose: () => void
+}) {
   const [frame, setFrame] = useState<string | null>(null)
   const [states, setStates] = useState<StateEvent[]>([])
   const [fields, setFields] = useState<FieldEvent[]>([])
@@ -196,7 +209,7 @@ export function LiveView({ attemptId, onClose }: { attemptId: string; onClose: (
     // The wrapper carries the click handler: `Card` takes no DOM props, and
     // arming the sound needs a real user gesture anywhere in the panel.
     <div onClick={armSound}>
-    <Card className="p-0! overflow-hidden">
+    <Card className="min-w-0 w-full p-0! overflow-hidden">
       <div className="flex flex-wrap items-center gap-2 border-b-[3px] border-ink bg-butter-200 px-4 py-2.5">
         <span className="font-display text-lg font-bold">
           {current ? (STATE_LABEL[current.state] ?? current.state) : 'Connecting…'}
@@ -223,7 +236,17 @@ export function LiveView({ attemptId, onClose }: { attemptId: string; onClose: (
             where you leave it.
           </p>
           <div className="mt-2.5 flex gap-2">
-            {!takingOver ? (
+            {liveUrl ? (
+              <Button
+                size="sm"
+                variant="blue"
+                onClick={() => {
+                  send({ kind: 'release' })
+                }}
+              >
+                I am done — carry on
+              </Button>
+            ) : !takingOver ? (
               <Button size="sm" onClick={() => setTakingOver(true)}>
                 Take over
               </Button>
@@ -243,9 +266,22 @@ export function LiveView({ attemptId, onClose }: { attemptId: string; onClose: (
         </div>
       )}
 
-      <div className="grid gap-0 lg:grid-cols-[1.6fr_1fr]">
-        <div className="bg-ink/5 p-3">
-          {frame ? (
+      <div className="grid min-w-0 gap-0 lg:grid-cols-[minmax(0,1.6fr)_minmax(16rem,1fr)]">
+        <div className="min-w-0 overflow-hidden bg-ink/5 p-3">
+          {liveUrl ? (
+            <>
+              <iframe
+                src={liveUrl}
+                title="The application form, live"
+                allow="clipboard-read; clipboard-write"
+                className="block h-[32rem] w-full min-w-0 max-w-full rounded-xl border-[3px] border-ink bg-white"
+              />
+              <p className="mt-2 text-xs font-semibold text-ink-soft">
+                This is the real browser. Click and type in it any time — Hunty carries on from
+                wherever you leave it.
+              </p>
+            </>
+          ) : frame ? (
             <img
               ref={imageRef}
               src={`data:image/jpeg;base64,${frame}`}
@@ -267,7 +303,7 @@ export function LiveView({ attemptId, onClose }: { attemptId: string; onClose: (
           )}
         </div>
 
-        <div className="border-t-[3px] border-ink p-3 lg:border-t-0 lg:border-l-[3px]">
+        <div className="min-w-0 border-t-[3px] border-ink p-3 lg:border-t-0 lg:border-l-[3px]">
           <div className="font-display text-sm font-bold">Fields</div>
           <div className="mt-2 flex max-h-72 flex-col gap-1 overflow-y-auto">
             {fields.length === 0 && (

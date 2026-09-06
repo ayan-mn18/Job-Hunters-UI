@@ -3,6 +3,7 @@ import {
   Button,
   Card,
   Chip,
+  Dialog,
   Empty,
   Input,
   SectionTitle,
@@ -10,7 +11,7 @@ import {
   type ChipTone,
 } from '../components/ui'
 import { api, downloadFile } from '../lib/api'
-import type { Application, ApplicationCounts, ApplicationStatus } from '../lib/types'
+import type { Application, ApplicationCounts, ApplicationReview, ApplicationStatus } from '../lib/types'
 
 const statusMeta: Record<ApplicationStatus, { label: string; tone: ChipTone; emoji: string }> = {
   queued: { label: 'Queued', tone: 'white', emoji: '⏳' },
@@ -55,6 +56,13 @@ export function Applications() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [exporting, setExporting] = useState(false)
+  const [reloadToken, setReloadToken] = useState(0)
+
+  const [reviewingApp, setReviewingApp] = useState<Application | null>(null)
+  const [review, setReview] = useState<ApplicationReview | null>(null)
+  const [reviewLoading, setReviewLoading] = useState(false)
+  const [reviewError, setReviewError] = useState('')
+  const [resolving, setResolving] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -86,7 +94,7 @@ export function Applications() {
       cancelled = true
       clearTimeout(timer)
     }
-  }, [filter, q])
+  }, [filter, q, reloadToken])
 
   async function exportCsv() {
     setExporting(true)
@@ -96,6 +104,32 @@ export function Applications() {
       setError(err instanceof Error ? err.message : 'The export failed.')
     } finally {
       setExporting(false)
+    }
+  }
+
+  function openReview(app: Application) {
+    setReviewingApp(app)
+    setReview(null)
+    setReviewError('')
+    setReviewLoading(true)
+    api
+      .get<ApplicationReview>(`/applications/${app.id}/review`)
+      .then(({ data }) => setReview(data))
+      .catch((err) => setReviewError(err instanceof Error ? err.message : 'Could not load what Hunty saw.'))
+      .finally(() => setReviewLoading(false))
+  }
+
+  async function resolveReview(status: 'applied' | 'closed') {
+    if (!reviewingApp) return
+    setResolving(true)
+    try {
+      await api.patch(`/applications/${reviewingApp.id}/status`, { status })
+      setReviewingApp(null)
+      setReloadToken((n) => n + 1)
+    } catch (err) {
+      setReviewError(err instanceof Error ? err.message : 'Could not update the application.')
+    } finally {
+      setResolving(false)
     }
   }
 
@@ -201,13 +235,20 @@ export function Applications() {
                     </div>
                     <div className="text-right">
                       <div className="text-xs font-semibold text-ink-soft">{a.appliedAt}</div>
-                      {a.jobUrl && (
-                        <a href={a.jobUrl} target="_blank" rel="noreferrer">
-                          <Button size="sm" variant="ghost" className="mt-1.5">
-                            Open JD
+                      <div className="mt-1.5 flex gap-1.5">
+                        {a.status === 'needs_review' && (
+                          <Button size="sm" variant="blue" onClick={() => openReview(a)}>
+                            Review
                           </Button>
-                        </a>
-                      )}
+                        )}
+                        {a.jobUrl && (
+                          <a href={a.jobUrl} target="_blank" rel="noreferrer">
+                            <Button size="sm" variant="ghost">
+                              Open JD
+                            </Button>
+                          </a>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -216,6 +257,74 @@ export function Applications() {
           })}
         </div>
       )}
+
+      <Dialog
+        open={reviewingApp !== null}
+        onClose={() => setReviewingApp(null)}
+        eyebrow="Needs review"
+        title={reviewingApp ? `${reviewingApp.role} at ${reviewingApp.company}` : ''}
+        subtitle="What Hunty saw before it stopped and asked for you"
+        footer={
+          reviewingApp && (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span className="text-xs font-semibold text-ink-soft">
+                Applying here won't retry automatically — pick what actually happened.
+              </span>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="ghost" disabled={resolving} onClick={() => void resolveReview('closed')}>
+                  Skip this one
+                </Button>
+                <Button size="sm" variant="blue" disabled={resolving} onClick={() => void resolveReview('applied')}>
+                  I finished it myself
+                </Button>
+              </div>
+            </div>
+          )
+        }
+      >
+        {reviewLoading ? (
+          <div className="space-y-3">
+            <div className="h-48 animate-pulse rounded-2xl bg-butter-100" />
+            <div className="h-6 w-2/3 animate-pulse rounded-full bg-butter-200" />
+          </div>
+        ) : reviewError ? (
+          <p className="rounded-2xl bg-coral/15 p-4 font-semibold">{reviewError}</p>
+        ) : review ? (
+          <div className="space-y-4">
+            {review.evidenceUrl ? (
+              <img
+                src={review.evidenceUrl}
+                alt="A screenshot of the form when Hunty stopped"
+                className="w-full rounded-2xl border-[3px] border-ink"
+              />
+            ) : (
+              <p className="text-sm font-semibold text-ink-soft">
+                No screenshot was saved for this attempt.
+              </p>
+            )}
+            {review.reason && (
+              <p className="text-sm font-semibold">{review.reason}</p>
+            )}
+            {review.unresolvedFields.length > 0 && (
+              <div>
+                <div className="font-display text-sm font-bold">Hunty got stuck on</div>
+                <ul className="mt-1.5 space-y-1">
+                  {review.unresolvedFields.map((field, index) => (
+                    <li key={index} className="text-sm font-semibold text-ink-soft">
+                      {field.label || field.type}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {reviewingApp?.jobUrl && (
+              <a href={reviewingApp.jobUrl} target="_blank" rel="noreferrer">
+                <Button size="sm" variant="ghost">Open the posting ↗</Button>
+              </a>
+            )}
+          </div>
+        ) : null}
+      </Dialog>
     </div>
   )
 }

@@ -1,21 +1,32 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/context'
 import { Mascot } from '../components/Mascot'
 import { Button, Card, Chip, Empty, Progress, SectionTitle, Stat } from '../components/ui'
 import { api } from '../lib/api'
+import { useGmailOAuthReturn } from '../lib/gmailOAuth'
 import type { Dashboard } from '../lib/types'
 
 const BANNER_KEY = 'jobhunters.demo.firstRunBannerDismissed'
 
 export function Den() {
   const { user } = useAuth()
+  const navigate = useNavigate()
   const [dash, setDash] = useState<Dashboard | null>(null)
   const [error, setError] = useState('')
+  const [gmailError, setGmailError] = useState<string | null>(null)
   const firstName = (user?.name ?? 'Hunter').split(' ')[0]
   const [showBanner, setShowBanner] = useState(
     () => localStorage.getItem(BANNER_KEY) !== '1',
   )
+
+  useGmailOAuthReturn((message) => {
+    if (message) {
+      setGmailError(message)
+      return
+    }
+    navigate('/app/inbox', { replace: true })
+  })
 
   useEffect(() => {
     let cancelled = false
@@ -58,6 +69,11 @@ export function Den() {
 
   return (
     <div className="space-y-7">
+      {gmailError && (
+        <Card className="bg-coral/15!">
+          <Empty emoji="📪" title="Gmail did not connect" sub={gmailError} />
+        </Card>
+      )}
       {showBanner && (
         <Card className="animate-pop-in flex flex-wrap items-center gap-4 bg-mint/25!">
           <span className="text-3xl">🎉</span>

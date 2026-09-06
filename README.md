@@ -21,6 +21,23 @@ npm run dev   # serves on http://localhost:6000
 `.env` holds one variable: `VITE_API_URL=http://localhost:6060`, where the API
 listens. Start the API first (its README covers that), then this dev server.
 
+## Vercel production environment
+
+The Vercel deployment needs exactly one environment variable:
+
+```text
+VITE_API_URL=https://<your-public-api-hostname>
+```
+
+Use the HTTPS hostname that points to the EC2 API through Nginx, with no
+trailing slash. Vite substitutes this value at build time, and the live browser
+view automatically converts `https://` to `wss://`.
+
+Do not add database URLs, JWT secrets, Supabase service-role keys, Browser Use,
+Firecrawl, model, Gmail, or payment secrets to Vercel. Those remain backend
+secrets. The backend `CORS_ORIGINS` must include the Vercel origin, for example
+`https://job-hunters-ui.vercel.app`.
+
 ## Stack
 
 - Vite + React 19 + TypeScript

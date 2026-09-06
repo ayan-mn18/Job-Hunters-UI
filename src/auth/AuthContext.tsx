@@ -66,6 +66,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [applySession],
   )
 
+  const startGoogleSignIn = useCallback(async () => {
+    const { data } = await api.post<{ authorizeUrl: string }>('/auth/google/start', {})
+    return data.authorizeUrl
+  }, [])
+
+  const signInWithGoogle = useCallback(
+    async (code: string, state: string) => {
+      const { data } = await api.post<AuthSession>('/auth/google/callback', { code, state })
+      return applySession(data)
+    },
+    [applySession],
+  )
+
   const signUp = useCallback(
     async (name: string, email: string, password: string) => {
       const { data } = await api.post<AuthSession>('/auth/signup', { name, email, password })
@@ -90,8 +103,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const value = useMemo(
-    () => ({ user, ready, signIn, signUp, completeOnboarding, signOut }),
-    [user, ready, signIn, signUp, completeOnboarding, signOut],
+    () => ({
+      user,
+      ready,
+      signIn,
+      startGoogleSignIn,
+      signInWithGoogle,
+      signUp,
+      completeOnboarding,
+      signOut,
+    }),
+    [user, ready, signIn, startGoogleSignIn, signInWithGoogle, signUp, completeOnboarding, signOut],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

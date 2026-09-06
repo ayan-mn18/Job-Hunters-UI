@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Mascot } from '../components/Mascot'
 import { Button, Card, Chip, Field, Input } from '../components/ui'
@@ -13,7 +13,7 @@ const perks = [
 
 export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
   const isSignup = mode === 'signup'
-  const { signIn, signUp } = useAuth()
+  const { signIn, signUp, startGoogleSignIn, signInWithGoogle } = useAuth()
   const navigate = useNavigate()
 
   const [name, setName] = useState('')
@@ -21,6 +21,49 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const oauthHandledRef = useRef(false)
+
+  useEffect(() => {
+    if (oauthHandledRef.current) return
+    const params = new URLSearchParams(window.location.search)
+    const code = params.get('code')
+    const state = params.get('state')
+    const oauthError = params.get('error')
+
+    if (oauthError) {
+      oauthHandledRef.current = true
+      window.history.replaceState(null, '', window.location.pathname + window.location.hash)
+      setError(params.get('error_description') ?? 'Google did not approve sign-in.')
+      return
+    }
+    if (!code || !state) return
+
+    oauthHandledRef.current = true
+    window.history.replaceState(null, '', window.location.pathname + window.location.hash)
+    setBusy(true)
+    void signInWithGoogle(code, state)
+      .then((user) => {
+        navigate(user.onboarded ? '/app' : '/welcome', { replace: true })
+      })
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : 'Google sign-in failed. Try again.')
+      })
+      .finally(() => {
+        setBusy(false)
+      })
+  }, [navigate, signInWithGoogle])
+
+  async function onGoogleSignIn() {
+    setError('')
+    setBusy(true)
+    try {
+      const authorizeUrl = await startGoogleSignIn()
+      window.location.assign(authorizeUrl)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not start Google sign-in.')
+      setBusy(false)
+    }
+  }
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
@@ -156,6 +199,15 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
             <div className="grid gap-2.5 sm:grid-cols-2">
               <Button
                 variant="ghost"
+                onClick={() => void onGoogleSignIn()}
+                disabled={busy}
+                icon={<span className="font-display font-bold text-sky-pop">G</span>}
+              >
+                Continue with Google
+              </Button>
+              <Button
+                variant="ghost"
+                disabled={busy}
                 onClick={() => {
                   setEmail('demo@jobhunters.test')
                   setPassword('hunty-demo-2026')

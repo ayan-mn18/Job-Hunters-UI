@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { LiveView } from '../components/LiveView'
 import { Mascot } from '../components/Mascot'
 import {
   Button,
@@ -88,12 +89,22 @@ export function Hunt() {
   }, [])
 
   const running = status?.running ?? false
+  const applying = status?.applying ?? false
   const awaitingApproval = status?.awaitingApproval ?? false
+  const active = running || applying
+  const [watchingAttemptId, setWatchingAttemptId] = useState<string | null>(null)
+  const liveAttemptId = status?.liveAttemptId ?? null
+
+  // The attempt in front of a browser changes between polls; drop a stale
+  // watch rather than showing a panel connected to an attempt that finished.
+  useEffect(() => {
+    if (watchingAttemptId && watchingAttemptId !== liveAttemptId) setWatchingAttemptId(null)
+  }, [liveAttemptId, watchingAttemptId])
 
   // While a hunt is out, poll for it to come back. Stops as soon as the run
   // leaves a running state, and cleans up if the page is left mid-hunt.
   useEffect(() => {
-    if (!running) return
+    if (!active) return
     let cancelled = false
     const timer = window.setInterval(() => {
       api
@@ -114,7 +125,7 @@ export function Hunt() {
       window.clearInterval(timer)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [running])
+  }, [active])
 
   async function loadCandidates(runId: string): Promise<void> {
     try {
@@ -141,7 +152,7 @@ export function Hunt() {
       const { data } = await api.post<HuntStartResult>('/hunt/start', {})
       setStatus((current) =>
         current
-          ? { ...current, running: true, awaitingApproval: false, currentRun: data, candidateCount: 0 }
+          ? { ...current, running: true, applying: false, awaitingApproval: false, currentRun: data, candidateCount: 0 }
           : current,
       )
     } catch (err) {
@@ -349,16 +360,18 @@ export function Hunt() {
       )}
 
       {/* control panel */}
-      <Card className={running ? 'bg-mint/25!' : awaitingApproval ? 'bg-blue-100!' : 'bg-butter-300!'}>
+      <Card className={active ? 'bg-mint/25!' : awaitingApproval ? 'bg-blue-100!' : 'bg-butter-300!'}>
         <div className="flex flex-wrap items-center gap-5">
-          <Mascot mood={running ? 'hunting' : 'happy'} size={110} />
+          <Mascot mood={active ? 'hunting' : 'happy'} size={110} />
           <div className="min-w-56 flex-1">
-            <Chip tone={running ? 'mint' : awaitingApproval ? 'blue' : 'white'}>
-              {running ? '● hunting right now' : awaitingApproval ? 'review needed' : '○ idle'}
+            <Chip tone={active ? 'mint' : awaitingApproval ? 'blue' : 'white'}>
+              {running ? '● hunting right now' : applying ? '● applying approved jobs' : awaitingApproval ? 'review needed' : '○ idle'}
             </Chip>
             <h3 className="mt-2 text-3xl">
               {running
                 ? 'Out in the wild.'
+                : applying
+                  ? 'Finishing approved applications.'
                 : awaitingApproval
                   ? `${status?.candidateCount ?? candidates.length} jobs await approval.`
                   : 'Ready when you are.'}
@@ -377,16 +390,31 @@ export function Hunt() {
               </ul>
             )}
           </div>
-          <Button
-            size="lg"
-            variant={running || awaitingApproval ? 'danger' : 'blue'}
-            disabled={busy}
-            onClick={running || awaitingApproval ? stopHunt : startHunt}
-          >
-            {busy ? 'Working…' : running || awaitingApproval ? 'Stop hunt' : 'Find today’s jobs'}
-          </Button>
+          <div className="flex flex-col gap-2">
+            {liveAttemptId && (
+              <Button size="sm" variant="blue" onClick={() => setWatchingAttemptId(liveAttemptId)}>
+                👀 Watch live
+              </Button>
+            )}
+            <Button
+              size="lg"
+              variant={active || awaitingApproval ? 'danger' : 'blue'}
+              disabled={busy}
+              onClick={active || awaitingApproval ? stopHunt : startHunt}
+            >
+              {busy ? 'Working…' : active || awaitingApproval ? 'Stop hunt' : 'Find today’s jobs'}
+            </Button>
+          </div>
         </div>
       </Card>
+
+      {watchingAttemptId && (
+        <LiveView
+          attemptId={watchingAttemptId}
+          liveUrl={status?.liveUrl ?? null}
+          onClose={() => setWatchingAttemptId(null)}
+        />
+      )}
 
       {awaitingApproval && candidates.length > 0 && (
         <section>
