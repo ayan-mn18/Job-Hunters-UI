@@ -18,7 +18,7 @@ npm install
 npm run dev   # serves on http://localhost:6000
 ```
 
-`.env` holds one variable: `VITE_API_URL=http://localhost:6060`, where the API
+`.env` holds one variable: `VITE_API_URL=http://localhost:46460`, where the API
 listens. Start the API first (its README covers that), then this dev server.
 
 ## Vercel production environment
